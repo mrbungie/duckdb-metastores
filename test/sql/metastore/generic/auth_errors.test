@@ -1,0 +1,39 @@
+# name: test/sql/metastore/generic/auth_errors.test
+# description: verify auth error messages are actionable and mention the missing option
+# group: [sql]
+#
+# NOTE: These tests validate the error contract for the ATTACH 'metastore' pathway.
+# They rely on the StorageExtension Attach callback (wired in T7) calling
+# ResolveConnectorConfig from src/auth/metastore_secret_bridge.cpp.
+# Tests will fail until T7 completes the ATTACH wiring.
+
+require metastore
+
+# ---- Missing PROVIDER option ----
+# ATTACH without PROVIDER must produce an actionable error that mentions "PROVIDER"
+# so the user knows exactly which option to add.
+statement error
+ATTACH 'metastore_db' AS ms (TYPE metastore);
+----
+PROVIDER
+
+# ---- Unrecognized PROVIDER value ----
+# An unknown provider name must produce an error mentioning the valid providers.
+statement error
+ATTACH 'metastore_db' AS ms (TYPE metastore, PROVIDER 'unknown_provider');
+----
+Supported providers
+
+# ---- HMS: missing ENDPOINT ----
+# Specifying provider 'hms' without ENDPOINT must produce an error mentioning ENDPOINT.
+statement error
+ATTACH 'metastore_db' AS ms (TYPE metastore, PROVIDER 'hms');
+----
+ENDPOINT
+
+# ---- Glue: missing REGION ----
+# Specifying provider 'glue' without REGION must produce an error mentioning REGION.
+statement error
+ATTACH 'metastore_db' AS ms (TYPE metastore, PROVIDER 'glue');
+----
+REGION

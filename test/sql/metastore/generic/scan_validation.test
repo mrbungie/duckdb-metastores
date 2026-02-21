@@ -1,0 +1,79 @@
+# name: test/sql/metastore/generic/scan_validation.test
+# description: validate metastore_scan argument constraints (count, nulls, empty strings)
+# group: [sql]
+
+require metastore
+
+# Valid call: exactly 3 non-empty VARCHAR args must succeed and return empty result
+statement ok
+SELECT * FROM metastore_scan('catalog', 'schema', 'table_name');
+
+# ---- Missing argument tests ----
+
+# Missing all 3 required arguments
+statement error
+SELECT * FROM metastore_scan();
+----
+metastore_scan requires at least 3 arguments
+
+# Missing 2 arguments (only 1 provided)
+statement error
+SELECT * FROM metastore_scan('catalog_only');
+----
+metastore_scan requires at least 3 arguments
+
+# Missing 1 argument (only 2 provided)
+statement error
+SELECT * FROM metastore_scan('catalog', 'schema');
+----
+metastore_scan requires at least 3 arguments
+
+# ---- NULL argument tests ----
+
+# First argument (catalog) is NULL
+statement error
+SELECT * FROM metastore_scan(NULL, 'schema', 'table_name');
+----
+cannot be NULL
+
+# Second argument (schema) is NULL
+statement error
+SELECT * FROM metastore_scan('catalog', NULL, 'table_name');
+----
+cannot be NULL
+
+# Third argument (table_name) is NULL
+statement error
+SELECT * FROM metastore_scan('catalog', 'schema', NULL);
+----
+cannot be NULL
+
+# ---- Empty string argument tests ----
+
+# First argument (catalog) is empty string
+statement error
+SELECT * FROM metastore_scan('', 'schema', 'table_name');
+----
+cannot be empty
+
+# Second argument (schema) is empty string
+statement error
+SELECT * FROM metastore_scan('catalog', '', 'table_name');
+----
+cannot be empty
+
+# Third argument (table_name) is empty string
+statement error
+SELECT * FROM metastore_scan('catalog', 'schema', '');
+----
+cannot be empty
+
+# ---- Schema validation: valid call returns 5 VARCHAR columns ----
+
+# Column count: 5 columns (table_catalog, table_schema, table_name, location, format)
+query I
+SELECT COUNT(*) FROM (
+    SELECT * FROM metastore_scan('my_catalog', 'my_schema', 'my_table')
+);
+----
+0

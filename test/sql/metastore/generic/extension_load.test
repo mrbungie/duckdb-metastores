@@ -1,0 +1,21 @@
+# name: test/sql/metastore/generic/extension_load.test
+# description: verify the metastore extension loads and metastore_scan function exists
+# group: [sql]
+
+# Before the extension is loaded, metastore_scan must not exist
+statement error
+SELECT * FROM metastore_scan('catalog', 'schema', 'table');
+----
+Catalog Error
+
+# Require statement ensures this test runs with the metastore extension loaded
+require metastore
+
+# After loading, a valid call to metastore_scan must succeed (empty result ok)
+statement ok
+SELECT * FROM metastore_scan('my_catalog', 'my_schema', 'my_table');
+
+# Verify metastore_scan returns the expected 5-column schema
+query IIIII
+SELECT * FROM metastore_scan('my_catalog', 'my_schema', 'my_table');
+----
