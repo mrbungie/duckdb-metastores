@@ -113,3 +113,34 @@
 - Partition pruning remains disabled for unpartitioned tables (`partition_spec.columns.empty()`)
 - Planner intentionally avoids provider-specific behavior and optimizer/runtime coupling
 - Default behavior stays conservative: pushdown is only enabled when metadata is explicit and safe
+
+## [2026-02-21] T9 - HMS Connector Core Operations
+
+### Files Created
+- `src/providers/hms/hms_config.hpp` — `HmsConfig` struct + `HmsTransport` enum + `ParseHmsEndpoint()` declaration
+- `src/providers/hms/hms_connector.hpp` — `HmsConnector` class implementing `IMetastoreConnector`
+- `src/providers/hms/hms_connector.cpp` — Stub implementations (all return `Unsupported`) + `ParseHmsEndpoint()` real parsing logic
+
+### Key Design Decisions
+- `ParseHmsEndpoint()` is a real implementation (not a stub) — needed by T10 for factory wiring
+- All 5 connector methods return `MetastoreResult::Error(Unsupported, ..., retryable=true)` — infrastructure not-yet-implemented
+- `HmsConfig.endpoint` stores the hostname only (no scheme, no port) — scheme → `HmsTransport`, port → `HmsConfig.port`
+- Port validation: 1-65535 range, digits-only, uses `std::stoul` with bounds check
+- Error messages from `ParseHmsEndpoint` include the original URI string for actionable debugging
+- `src/providers` added to CMakeLists `include_directories` so `#include "hms/hms_config.hpp"` works from any source under `src/`
+
+### URI Parsing Coverage
+- `thrift://host:port` → Thrift transport
+- `thrift+ssl://host:port` → ThriftTLS transport
+- `host:port` → bare (defaults to Thrift)
+- `host` → bare (defaults to Thrift + port 9083)
+- Edge cases: empty URI, scheme-only (no host), invalid port, port=0, port>65535
+
+### Gotchas
+- No clangd available in CI — compilation verified by manual review only (same as T3)
+- `<algorithm>` and `<stdexcept>` were initially included but unused — removed to keep clean
+- Transitive includes from `hms_config.hpp` → `metastore_errors.hpp` → `metastore_connector.hpp` provide `<string>`, `<vector>`, `<cstdint>` etc.
+
+### Dependencies
+- Blocked by: T2 (types), T3 (connector interface), T6 (errors) — all complete
+- Blocks: T10 (factory wiring will call `ParseHmsEndpoint` + construct `HmsConnector`)
