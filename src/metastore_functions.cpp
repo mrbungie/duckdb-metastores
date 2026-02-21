@@ -1,11 +1,32 @@
 #include "metastore_functions.hpp"
+#include "metastore_runtime.hpp"
+#include "hms/hms_config.hpp"
+#include "hms/hms_connector.hpp"
 #include "duckdb.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/common/exception.hpp"
 
 namespace duckdb {
 
-// Bind function for metastore_scan table function
+struct MetastoreScanBindData : public FunctionData {
+	std::string catalog;
+	std::string schema;
+	std::string table_name;
+
+	unique_ptr<FunctionData> Copy() const override {
+		auto copy = make_uniq<MetastoreScanBindData>();
+		copy->catalog = catalog;
+		copy->schema = schema;
+		copy->table_name = table_name;
+		return std::move(copy);
+	}
+
+	bool Equals(const FunctionData &other_p) const override {
+		auto &other = other_p.Cast<MetastoreScanBindData>();
+		return catalog == other.catalog && schema == other.schema && table_name == other.table_name;
+	}
+};
+
 static unique_ptr<FunctionData> MetastoreScanBind(
 		ClientContext &context, TableFunctionBindInput &input,
 		vector<LogicalType> &return_types, vector<string> &names) {
@@ -43,8 +64,11 @@ static unique_ptr<FunctionData> MetastoreScanBind(
 		"format"
 	};
 
-	// Return empty bind data (no state needed for empty result)
-	return nullptr;
+	auto bind_data = make_uniq<MetastoreScanBindData>();
+	bind_data->catalog = input.inputs[0].GetValue<string>();
+	bind_data->schema = input.inputs[1].GetValue<string>();
+	bind_data->table_name = input.inputs[2].GetValue<string>();
+	return std::move(bind_data);
 }
 
 // Global state for metastore_scan
@@ -58,18 +82,35 @@ static unique_ptr<GlobalTableFunctionState> MetastoreScanInitGlobal(
 	return make_uniq<MetastoreScanGlobalState>();
 }
 
-// Execute function - returns empty result set
 static void MetastoreScanExecute(
 		ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &gstate = data.global_state->Cast<MetastoreScanGlobalState>();
 
-	// Return empty result set on first call
 	if (gstate.finished) {
 		output.SetCardinality(0);
 		return;
 	}
+	auto &bind_data = data.bind_data->Cast<MetastoreScanBindData>();
+	auto config_opt = LookupMetastoreAttachConfig(bind_data.catalog);
+	if (!config_opt.has_value()) {
+		throw InvalidInputException("Catalog is not attached as metastore: " + bind_data.catalog);
+	}
+	if (config_opt->provider != MetastoreProviderType::HMS) {
+		throw InvalidInputException("Only HMS provider is supported in this build");
+	}
+	auto hms_config = ParseHmsEndpoint(config_opt->endpoint);
+	HmsConnector connector(std::move(hms_config));
+	auto table_result = connector.GetTable(bind_data.schema, bind_data.table_name);
+	if (!table_result.IsOk()) {
+		throw InvalidInputException(table_result.error.message);
+	}
+	output.SetCardinality(1);
+	output.SetValue(0, 0, Value(table_result.value.catalog));
+	output.SetValue(1, 0, Value(table_result.value.namespace_name));
+	output.SetValue(2, 0, Value(table_result.value.name));
+	output.SetValue(3, 0, Value(table_result.value.storage_descriptor.location));
+	output.SetValue(4, 0, Value(MetastoreFormatToString(table_result.value.storage_descriptor.format)));
 	gstate.finished = true;
-	output.SetCardinality(0);
 }
 
 void RegisterMetastoreFunctions(ExtensionLoader &loader) {

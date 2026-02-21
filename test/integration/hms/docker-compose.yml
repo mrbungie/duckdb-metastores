@@ -1,0 +1,8 @@
+services:
+  hms-metastore:
+    image: apache/hive:4.0.0
+    container_name: metastore-hms
+    environment:
+      SERVICE_NAME: metastore
+    ports:
+      - "9083:9083"

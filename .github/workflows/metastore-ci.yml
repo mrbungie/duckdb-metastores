@@ -96,7 +96,8 @@ jobs:
       - name: Run integration tests
         if: steps.check_flag.outputs.enabled == 'true'
         run: |
-          echo "Integration tests placeholder — add provider-specific test targets in T11/T14/T16"
+          chmod +x scripts/run_hms_integration.sh
+          ./scripts/run_hms_integration.sh
         env:
           # HMS credentials (populated via GitHub Actions secrets)
           HMS_ENDPOINT: ${{ secrets.HMS_ENDPOINT }}

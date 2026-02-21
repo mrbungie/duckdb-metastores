@@ -22,6 +22,7 @@ public:
 
 private:
 	HmsConfig config_;
+	std::vector<std::string> namespaces_cache;
 };
 
 } // namespace duckdb

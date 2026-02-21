@@ -144,3 +144,60 @@
 ### Dependencies
 - Blocked by: T2 (types), T3 (connector interface), T6 (errors) — all complete
 - Blocks: T10 (factory wiring will call `ParseHmsEndpoint` + construct `HmsConnector`)
+
+## T8: Generic Metastore Tests and CI Lanes ✅
+
+### Status: COMPLETE (Commit: acd2b0f)
+
+**Deliverables:**
+1. ✅ `test/sql/metastore/generic/extension_load.test` — verifies extension loads and `metastore_scan` is callable with valid args
+2. ✅ `test/sql/metastore/generic/scan_validation.test` — all arg validation paths: missing args, NULL, empty → error; valid → empty result with 5 columns
+3. ✅ `test/sql/metastore/generic/auth_errors.test` — TDD contract tests for ATTACH PROVIDER error messages (active TDD: will fail until T7 wires Attach callback)
+4. ✅ `.github/workflows/metastore-ci.yml` — `local-tests` job (push/PR, no creds, `make test`) + `integration-tests` job (graceful skip unless `METASTORE_INTEGRATION_ENABLED=true` var or `workflow_dispatch` input)
+
+### SQLLogicTest Format Notes
+- Header: `# name:`, `# description:`, `# group: [sql]`
+- `require metastore` — loads extension; tests before this block run WITHOUT the extension
+- `statement error` + `----` + text → error must contain that text substring
+- `statement error` + `----` (empty) → any error accepted
+- `query I` + `----` + value → single-column result assertion
+- Extension name in `require` must match `TARGET_NAME` in `CMakeLists.txt` → `metastore`
+
+### auth_errors.test: TDD Design Decision
+- Tests the ATTACH pathway errors from `ResolveConnectorConfig` in `metastore_secret_bridge.cpp`
+- `MetastoreStorageExtension` currently has no `Attach` override → ATTACH errors with a generic message, NOT "PROVIDER"
+- These are intentional TDD contracts: they fail until T7 wires the `Attach` callback to call `ResolveConnectorConfig`
+- Do NOT remove them — they enforce the error message contract for T7
+
+### CI Design Notes
+- Integration gating uses `${{ vars.METASTORE_INTEGRATION_ENABLED }}` (GitHub Actions **variable**, not secret)
+- `workflow_dispatch` input `run_integration` provides manual one-off override
+- All expensive steps (checkout, build, vcpkg) are `if: steps.check_flag.outputs.enabled == 'true'` — skip is cheap
+- Credentials injected only when integration tests run (no accidental env exposure)
+- `lukka/run-vcpkg@v11.1` with pinned `vcpkgGitCommitId` matches existing workflow pattern
+
+## [2026-02-21] T11 - HMS integration matrix
+
+### Docker-backed integration strategy
+- Added `test/integration/hms/docker-compose.yml` with deterministic local HMS stack:
+  - `hms-metastore` (`apache/hive:4.0.0`) with `SERVICE_NAME=metastore`, port `9083`
+- Added `scripts/run_hms_integration.sh`:
+  - brings stack up/down with cleanup trap
+  - waits until HMS Thrift endpoint is reachable
+  - compiles/runs C++ integration harness in `gcc:13` container
+
+### Integration harness scope
+- Added `test/integration/hms/hms_integration_harness.cpp` covering:
+  - `ParseHmsEndpoint` happy + invalid endpoint path
+  - `HmsMapper::MapTable` for Parquet/ORC detection
+  - malformed metadata negative paths: missing location (`InvalidConfig`) and unknown serde (`Unsupported`)
+  - partition-heavy fixture preservation (64 partition columns)
+  - `HmsRetryPolicy` bounded exponential backoff behavior
+  - current `HmsConnector` stub envelope (`Unsupported`, retryable)
+
+### CI wiring
+- Updated `.github/workflows/metastore-ci.yml` integration job to execute `./scripts/run_hms_integration.sh` instead of placeholder output.
+
+### Environment gotcha
+- Local agent runtime had no host toolchain (`make`, `cmake`, `ninja`, `gcc`) and no Docker socket permissions.
+- Strategy uses containerized toolchain and Docker Compose so CI and developer machines with Docker can run the matrix consistently.
