@@ -1,6 +1,8 @@
 #define DUCKDB_EXTENSION_MAIN
 
 #include "metastore_extension.hpp"
+#include "metastore_errors.hpp"
+#include "metastore_functions.hpp"
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
 #include <duckdb/storage/storage_extension.hpp>
@@ -18,6 +20,12 @@ public:
 static void LoadInternal(ExtensionLoader &loader) {
 	auto metastore_storage = make_shared_ptr<MetastoreStorageExtension>();
 	loader.RegisterStorageExtension("metastore", metastore_storage);
+	
+	// Register extension options
+	loader.RegisterExtensionOption("metastore_debug", "Enable diagnostic mode for metastore operations",
+	                                LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	
+	RegisterMetastoreFunctions(loader);
 }
 
 void MetastoreExtension::Load(ExtensionLoader &loader) {
