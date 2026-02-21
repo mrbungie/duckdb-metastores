@@ -1,28 +1,11 @@
 #pragma once
 
+#include "metastore_connector.hpp"
 #include "duckdb.hpp"
 #include <stdexcept>
 #include <string>
 
 namespace duckdb {
-
-//! Error codes for metastore operations
-enum class MetastoreErrorCode : uint8_t {
-	//! Operation succeeded
-	Ok = 0,
-	//! Resource not found (e.g., table, namespace, catalog)
-	NotFound = 1,
-	//! Permission denied (e.g., authentication/authorization failure)
-	PermissionDenied = 2,
-	//! Transient error (e.g., network timeout, temporary service unavailable)
-	Transient = 3,
-	//! Invalid configuration (e.g., malformed endpoint, bad credentials)
-	InvalidConfig = 4,
-	//! Operation not supported by provider
-	Unsupported = 5,
-	//! Internal error (e.g., serialization failure, unexpected state)
-	InternalError = 6
-};
 
 inline const char *MetastoreErrorCodeToString(MetastoreErrorCode code) {
 	switch (code) {
@@ -38,8 +21,6 @@ inline const char *MetastoreErrorCodeToString(MetastoreErrorCode code) {
 		return "InvalidConfig";
 	case MetastoreErrorCode::Unsupported:
 		return "Unsupported";
-	case MetastoreErrorCode::InternalError:
-		return "InternalError";
 	default:
 		return "Unknown";
 	}
