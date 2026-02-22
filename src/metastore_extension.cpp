@@ -4,6 +4,7 @@
 #include "metastore_errors.hpp"
 #include "metastore_functions.hpp"
 #include "metastore_runtime.hpp"
+#include "metastore_connector.hpp"
 #include "auth/metastore_secret_bridge.hpp"
 #include "hms/hms_config.hpp"
 #include "hms/hms_connector.hpp"
@@ -118,8 +119,8 @@ static unique_ptr<TableRef> MetastoreReplacementScan(ClientContext &context, Rep
 		return nullptr;
 	}
 	auto hms_config = ParseHmsEndpoint(config_opt->endpoint);
-	HmsConnector connector(std::move(hms_config));
-	auto table_result = connector.GetTable(input.schema_name, input.table_name);
+	std::unique_ptr<IMetastoreConnector> connector = make_uniq<HmsConnector>(std::move(hms_config));
+	auto table_result = connector->GetTable(input.schema_name, input.table_name);
 	if (!table_result.IsOk()) {
 		if (table_result.error.code == MetastoreErrorCode::NotFound) {
 			return nullptr;

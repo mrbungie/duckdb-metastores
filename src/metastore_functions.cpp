@@ -1,5 +1,6 @@
 #include "metastore_functions.hpp"
 #include "metastore_runtime.hpp"
+#include "metastore_connector.hpp"
 #include "hms/hms_config.hpp"
 #include "hms/hms_connector.hpp"
 #include "duckdb.hpp"
@@ -99,8 +100,8 @@ static void MetastoreScanExecute(
 		throw InvalidInputException("Only HMS provider is supported in this build");
 	}
 	auto hms_config = ParseHmsEndpoint(config_opt->endpoint);
-	HmsConnector connector(std::move(hms_config));
-	auto table_result = connector.GetTable(bind_data.schema, bind_data.table_name);
+	std::unique_ptr<IMetastoreConnector> connector = make_uniq<HmsConnector>(std::move(hms_config));
+	auto table_result = connector->GetTable(bind_data.schema, bind_data.table_name);
 	if (!table_result.IsOk()) {
 		throw InvalidInputException(table_result.error.message);
 	}
