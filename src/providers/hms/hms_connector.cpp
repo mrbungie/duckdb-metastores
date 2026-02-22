@@ -1,8 +1,10 @@
 #include "hms/hms_connector.hpp"
 #include "hms/hms_mapper.hpp"
+#include "hms/hms_retry.hpp"
 
 #include <arpa/inet.h>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <netdb.h>
@@ -10,6 +12,7 @@
 #include <sstream>
 #include <functional>
 #include <sys/socket.h>
+#include <thread>
 #include <unistd.h>
 
 namespace duckdb {
@@ -658,8 +661,8 @@ MetastoreResult<std::vector<std::string>> ParseStringListResult(ThriftReader &re
 }
 
 template <typename BuildArgs>
-MetastoreResult<int> InvokeRpc(const HmsConfig &config, const std::string &method_name, int32_t seqid,
-	                             BuildArgs build_args, std::function<MetastoreResult<int>(ThriftReader &)> parse_result) {
+MetastoreResult<int> InvokeRpcOnce(const HmsConfig &config, const std::string &method_name, int32_t seqid,
+	                               BuildArgs build_args, std::function<MetastoreResult<int>(ThriftReader &)> parse_result) {
 	auto sock_result = ConnectSocket(config.endpoint, config.port);
 	if (!sock_result.IsOk()) {
 		return MetastoreResult<int>::Error(sock_result.error.code, std::move(sock_result.error.message),
@@ -696,6 +699,24 @@ MetastoreResult<int> InvokeRpc(const HmsConfig &config, const std::string &metho
 		return MetastoreResult<int>::Error(MetastoreErrorCode::Transient, "HMS reply header mismatch", "", true);
 	}
 	return parse_result(reader);
+}
+
+template <typename BuildArgs>
+MetastoreResult<int> InvokeRpc(const HmsConfig &config, const std::string &method_name, int32_t seqid,
+	                           BuildArgs build_args, std::function<MetastoreResult<int>(ThriftReader &)> parse_result) {
+	HmsRetryPolicy retry;
+	MetastoreResult<int> last_result;
+	for (uint32_t attempt = 1; retry.ShouldRetry(attempt - 1); attempt++) {
+		uint32_t delay_ms = retry.ComputeDelay(attempt - 1);
+		if (delay_ms > 0) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+		}
+		last_result = InvokeRpcOnce(config, method_name, seqid, build_args, parse_result);
+		if (last_result.IsOk() || !last_result.error.retryable) {
+			return last_result;
+		}
+	}
+	return last_result;
 }
 
 }

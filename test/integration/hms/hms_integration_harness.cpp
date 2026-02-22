@@ -108,9 +108,9 @@ void TestConnectorStubContract() {
 	HmsConnector connector(config);
 
 	auto ns_result = connector.ListNamespaces();
-	Assert(!ns_result.IsOk(), "stub ListNamespaces should fail");
-	Assert(ns_result.error.code == MetastoreErrorCode::Unsupported, "stub should return Unsupported");
-	Assert(ns_result.error.retryable, "stub error should be retryable");
+	Assert(!ns_result.IsOk(), "ListNamespaces to unreachable HMS should fail");
+	Assert(ns_result.error.code == MetastoreErrorCode::Transient, "connection failure should return Transient");
+	Assert(ns_result.error.retryable, "connection failure should be retryable");
 }
 
 }

@@ -4,9 +4,12 @@
 
 require metastore
 
-# Valid call: exactly 3 non-empty VARCHAR args must succeed and return empty result
-statement ok
+# Valid call: exactly 3 non-empty VARCHAR args must produce a catalog-not-attached error
+# (not an argument validation error) because 'catalog' is not registered via ATTACH.
+statement error
 SELECT * FROM metastore_scan('catalog', 'schema', 'table_name');
+----
+not attached as metastore
 
 # ---- Missing argument tests ----
 
@@ -68,12 +71,12 @@ SELECT * FROM metastore_scan('catalog', 'schema', '');
 ----
 cannot be empty
 
-# ---- Schema validation: valid call returns 5 VARCHAR columns ----
+# ---- Schema validation: valid args + unregistered catalog produces a catalog error ----
 
-# Column count: 5 columns (table_catalog, table_schema, table_name, location, format)
-query I
+# A catalog not registered via ATTACH produces a predictable error (not an arg validation error).
+statement error
 SELECT COUNT(*) FROM (
     SELECT * FROM metastore_scan('my_catalog', 'my_schema', 'my_table')
 );
 ----
-0
+not attached as metastore
