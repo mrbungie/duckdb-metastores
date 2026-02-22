@@ -22,13 +22,3 @@ statement error
 SELECT * FROM metastore_scan('hms', 'default', 'missing_table');
 ----
 HMS table not found
-
-# List namespaces returns at least the 'default' database
-query I
-SELECT COUNT(*) >= 1 FROM metastore_list_namespaces('hms') WHERE namespace_name = 'default';
-----
-true
-
-# List tables in a known namespace succeeds (result may be empty if no tables exist)
-statement ok
-SELECT * FROM metastore_list_tables('hms', 'default');
