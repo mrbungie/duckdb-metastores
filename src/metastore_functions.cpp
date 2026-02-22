@@ -9,16 +9,30 @@
 
 namespace duckdb {
 
+//===--------------------------------------------------------------------===//
+// MetastoreScanInfo — per-DatabaseInstance info attached to the TableFunction.
+// Carries the MetastoreStorageInfo pointer so the bind callback can access
+// the per-instance catalog map without global state.
+//===--------------------------------------------------------------------===//
+struct MetastoreScanInfo : public TableFunctionInfo {
+	MetastoreStorageInfo *storage_info = nullptr;
+};
+
 struct MetastoreScanBindData : public FunctionData {
 	std::string catalog;
 	std::string schema;
 	std::string table_name;
+	// Non-owning pointer to per-instance storage info. Lifetime: as long as the
+	// DatabaseInstance that loaded the extension (same object that owns
+	// StorageExtension::storage_info, which owns MetastoreStorageInfo).
+	MetastoreStorageInfo *storage_info = nullptr;
 
 	unique_ptr<FunctionData> Copy() const override {
 		auto copy = make_uniq<MetastoreScanBindData>();
 		copy->catalog = catalog;
 		copy->schema = schema;
 		copy->table_name = table_name;
+		copy->storage_info = storage_info;
 		return std::move(copy);
 	}
 
@@ -65,10 +79,17 @@ static unique_ptr<FunctionData> MetastoreScanBind(
 		"format"
 	};
 
+	// Retrieve the per-instance storage info stored on the TableFunction.
+	MetastoreStorageInfo *ms_info = nullptr;
+	if (input.info) {
+		ms_info = static_cast<MetastoreScanInfo &>(*input.info).storage_info;
+	}
+
 	auto bind_data = make_uniq<MetastoreScanBindData>();
 	bind_data->catalog = input.inputs[0].GetValue<string>();
 	bind_data->schema = input.inputs[1].GetValue<string>();
 	bind_data->table_name = input.inputs[2].GetValue<string>();
+	bind_data->storage_info = ms_info;
 	return std::move(bind_data);
 }
 
@@ -92,7 +113,10 @@ static void MetastoreScanExecute(
 		return;
 	}
 	auto &bind_data = data.bind_data->Cast<MetastoreScanBindData>();
-	auto config_opt = LookupMetastoreAttachConfig(bind_data.catalog);
+	if (!bind_data.storage_info) {
+		throw InternalException("metastore_scan: storage_info not set — extension may not be properly loaded");
+	}
+	auto config_opt = bind_data.storage_info->Lookup(bind_data.catalog);
 	if (!config_opt.has_value()) {
 		throw InvalidInputException("Catalog is not attached as metastore: " + bind_data.catalog);
 	}
@@ -114,16 +138,24 @@ static void MetastoreScanExecute(
 	gstate.finished = true;
 }
 
-void RegisterMetastoreFunctions(ExtensionLoader &loader) {
-	// Register metastore_scan table function
-	// Signature: metastore_scan(catalog VARCHAR, schema VARCHAR, table_name VARCHAR)
-	loader.RegisterFunction(TableFunction(
+void RegisterMetastoreFunctions(ExtensionLoader &loader, MetastoreStorageInfo *ms_info) {
+	// Build the table function. Store ms_info inside a TableFunctionInfo so the
+	// bind callback can access the per-instance storage info without global state.
+	TableFunction scan_fn(
 			"metastore_scan",
 			{LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
 			MetastoreScanExecute,
 			MetastoreScanBind,
 			MetastoreScanInitGlobal
-	));
+	);
+	// function_info is a shared_ptr per DuckDB's TableFunction API. MetastoreScanInfo
+	// only holds a raw non-owning pointer to MetastoreStorageInfo whose real owner is
+	// StorageExtension::storage_info (a unique_ptr inside DatabaseInstance). The shared_ptr
+	// here is required by the DuckDB API contract, not for shared ownership.
+	auto fn_info = make_shared_ptr<MetastoreScanInfo>();
+	fn_info->storage_info = ms_info;
+	scan_fn.function_info = std::move(fn_info);
+	loader.RegisterFunction(std::move(scan_fn));
 }
 
 } // namespace duckdb

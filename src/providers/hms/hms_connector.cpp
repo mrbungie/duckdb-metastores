@@ -270,19 +270,26 @@ bool SendAll(int fd, const std::vector<uint8_t> &buf) {
 	return true;
 }
 
-MetastoreResult<int> ConnectSocket(const std::string &host, uint16_t port) {
+MetastoreResult<int> ConnectSocket(const HmsConfig &config) {
 	addrinfo hints;
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 
 	addrinfo *results = nullptr;
-	std::string port_string = std::to_string(port);
-	int gai_result = getaddrinfo(host.c_str(), port_string.c_str(), &hints, &results);
+	std::string port_string = std::to_string(config.port);
+	int gai_result = getaddrinfo(config.endpoint.c_str(), port_string.c_str(), &hints, &results);
 	if (gai_result != 0) {
 		return MetastoreResult<int>::Error(MetastoreErrorCode::Transient, "HMS DNS resolution failed",
 		                                   gai_strerror(gai_result), true);
 	}
+
+	// Apply the configured timeout to send/recv I/O operations.
+	// Note: connect() timeout is not controllable via SO_SNDTIMEO on all platforms;
+	// SO_SNDTIMEO applies to data-phase send after the TCP handshake completes.
+	timeval timeout;
+	timeout.tv_sec = static_cast<long>(config.connection_timeout_ms / 1000);
+	timeout.tv_usec = static_cast<long>((config.connection_timeout_ms % 1000) * 1000);
 
 	int fd = -1;
 	for (addrinfo *addr = results; addr != nullptr; addr = addr->ai_next) {
@@ -290,9 +297,6 @@ MetastoreResult<int> ConnectSocket(const std::string &host, uint16_t port) {
 		if (fd < 0) {
 			continue;
 		}
-		timeval timeout;
-		timeout.tv_sec = 10;
-		timeout.tv_usec = 0;
 		setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 		setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 		if (connect(fd, addr->ai_addr, addr->ai_addrlen) == 0) {
@@ -663,7 +667,7 @@ MetastoreResult<std::vector<std::string>> ParseStringListResult(ThriftReader &re
 template <typename BuildArgs>
 MetastoreResult<int> InvokeRpcOnce(const HmsConfig &config, const std::string &method_name, int32_t seqid,
 	                               BuildArgs build_args, std::function<MetastoreResult<int>(ThriftReader &)> parse_result) {
-	auto sock_result = ConnectSocket(config.endpoint, config.port);
+	auto sock_result = ConnectSocket(config);
 	if (!sock_result.IsOk()) {
 		return MetastoreResult<int>::Error(sock_result.error.code, std::move(sock_result.error.message),
 		                                  std::move(sock_result.error.detail), sock_result.error.retryable);
