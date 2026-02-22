@@ -71,6 +71,27 @@ static string MapHiveTypeToDuckDB(const string &hive_type) {
 	if (normalized == "binary") {
 		return "BLOB";
 	}
+	if (normalized == "decimal") {
+		// Preserve precision and scale from e.g. "decimal(10,2)"
+		auto param_start = hive_type.find('(');
+		auto param_end = hive_type.find(')');
+		if (param_start != string::npos && param_end != string::npos && param_end > param_start) {
+			auto params = hive_type.substr(param_start + 1, param_end - param_start - 1);
+			// Validate that params look like "digits,digits" before passing to DuckDB
+			auto comma = params.find(',');
+			if (comma != string::npos && comma > 0 && comma + 1 < params.size()) {
+				auto precision = params.substr(0, comma);
+				auto scale = params.substr(comma + 1);
+				auto is_digits = [](const string &s) {
+					return !s.empty() && s.find_first_not_of("0123456789") == string::npos;
+				};
+				if (is_digits(precision) && is_digits(scale)) {
+					return "DECIMAL(" + params + ")";
+				}
+			}
+		}
+		return "DECIMAL";
+	}
 	return "VARCHAR";
 }
 
@@ -134,7 +155,7 @@ static unique_ptr<TableRef> MetastoreReplacementScan(ClientContext &context, Rep
 	string scan_function;
 	switch (table_result.value.storage_descriptor.format) {
 	case MetastoreFormat::CSV:
-		scan_function = "read_csv_auto";
+		scan_function = "read_csv";
 		break;
 	case MetastoreFormat::Parquet:
 		Catalog::TryAutoLoad(context, "parquet");

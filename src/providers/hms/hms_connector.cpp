@@ -768,6 +768,9 @@ MetastoreResult<std::vector<std::string>> HmsConnector::ListTables(const std::st
 		                       return MetastoreResult<int>::Success(0);
 	                       });
 	if (!status.IsOk()) {
+		if (status.error.code == MetastoreErrorCode::NotFound) {
+			return MetastoreResult<std::vector<std::string>>::Success({});
+		}
 		return MetastoreResult<std::vector<std::string>>::Error(status.error.code, std::move(status.error.message),
 		                                                       std::move(status.error.detail), status.error.retryable);
 	}
