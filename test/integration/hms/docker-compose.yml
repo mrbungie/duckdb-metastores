@@ -4,5 +4,20 @@ services:
     container_name: metastore-hms
     environment:
       SERVICE_NAME: metastore
+    volumes:
+      - ${HMS_SHARED_DIR}:${HMS_SHARED_DIR}
     ports:
       - "9083:9083"
+
+  hms-hiveserver2:
+    image: apache/hive:4.0.0
+    container_name: hiveserver2-hms
+    depends_on:
+      - hms-metastore
+    environment:
+      SERVICE_NAME: hiveserver2
+      SERVICE_OPTS: "-Dhive.metastore.uris=thrift://hms-metastore:9083"
+    volumes:
+      - ${HMS_SHARED_DIR}:${HMS_SHARED_DIR}
+    ports:
+      - "10000:10000"

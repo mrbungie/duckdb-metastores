@@ -404,6 +404,28 @@ bool ParseSerdeInfo(ThriftReader &reader, MetastoreStorageDescriptor &sd) {
 				return false;
 			}
 			sd.serde_class = std::move(serde);
+		} else if (field_id == 3 && field_type == ThriftType::Map) {
+			uint8_t key_type_raw, val_type_raw;
+			int32_t count;
+			if (!reader.ReadByte(key_type_raw) || !reader.ReadByte(val_type_raw) || !reader.ReadI32(count) || count < 0) {
+				return false;
+			}
+			auto key_type = static_cast<ThriftType>(key_type_raw);
+			auto val_type = static_cast<ThriftType>(val_type_raw);
+			for (int32_t i = 0; i < count; i++) {
+				if (key_type == ThriftType::String && val_type == ThriftType::String) {
+					std::string key;
+					std::string val;
+					if (!reader.ReadString(key) || !reader.ReadString(val)) {
+						return false;
+					}
+					sd.serde_parameters[std::move(key)] = std::move(val);
+				} else {
+					if (!reader.Skip(key_type) || !reader.Skip(val_type)) {
+						return false;
+					}
+				}
+			}
 		} else {
 			if (!reader.Skip(field_type)) {
 				return false;
@@ -429,6 +451,29 @@ bool ParseStorageDescriptor(ThriftReader &reader, MetastoreStorageDescriptor &sd
 		if (field_id == 2 && field_type == ThriftType::String) {
 			if (!reader.ReadString(sd.location)) {
 				return false;
+			}
+		} else if (field_id == 1 && field_type == ThriftType::List) {
+			uint8_t elem_type_raw;
+			int32_t count;
+			if (!reader.ReadByte(elem_type_raw) || !reader.ReadI32(count) || count < 0) {
+				return false;
+			}
+			auto elem_type = static_cast<ThriftType>(elem_type_raw);
+			for (int32_t i = 0; i < count; i++) {
+				if (elem_type == ThriftType::Struct) {
+					MetastoreColumn col;
+					MetastorePartitionColumn parsed_col;
+					if (!ParseFieldSchema(reader, parsed_col)) {
+						return false;
+					}
+					col.name = std::move(parsed_col.name);
+					col.type = std::move(parsed_col.type);
+					sd.columns.push_back(std::move(col));
+				} else {
+					if (!reader.Skip(elem_type)) {
+						return false;
+					}
+				}
 			}
 		} else if (field_id == 3 && field_type == ThriftType::String) {
 			std::string input_format;

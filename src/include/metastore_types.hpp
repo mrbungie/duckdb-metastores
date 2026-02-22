@@ -38,11 +38,16 @@ inline const char *MetastoreFormatToString(MetastoreFormat fmt) {
 
 using MetastoreTableProperties = std::unordered_map<std::string, std::string>;
 
+struct MetastoreColumn {
+	std::string name;
+	std::string type;
+};
+
 struct MetastoreStorageDescriptor {
-	//! Root location URI (e.g. s3://bucket/warehouse/db/table)
 	std::string location;
 	MetastoreFormat format = MetastoreFormat::Unknown;
-	//! HMS-style SerDe/format classes — optional, provider-specific metadata passthrough
+	std::vector<MetastoreColumn> columns;
+	std::unordered_map<std::string, std::string> serde_parameters;
 	std::optional<std::string> serde_class;
 	std::optional<std::string> input_format;
 	std::optional<std::string> output_format;
