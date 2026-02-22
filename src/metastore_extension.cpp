@@ -28,6 +28,17 @@
 
 namespace duckdb {
 
+//===--------------------------------------------------------------------===//
+// ReplacementScanData that carries a pointer to the per-instance storage info.
+// Lifetime: MetastoreStorageInfo is owned by StorageExtension::storage_info
+// which lives inside DBConfig which is owned by DatabaseInstance. Both the
+// StorageExtension and replacement_scans are owned by the same DBConfig, so
+// the raw pointer is always valid while the db is alive.
+//===--------------------------------------------------------------------===//
+struct MetastoreReplacementScanData : public ReplacementScanData {
+	MetastoreStorageInfo *storage_info = nullptr;
+};
+
 static string TrimTypeSuffix(string hive_type) {
 	auto pos = hive_type.find('(');
 	if (pos != string::npos) {
@@ -71,6 +82,27 @@ static string MapHiveTypeToDuckDB(const string &hive_type) {
 	if (normalized == "binary") {
 		return "BLOB";
 	}
+	if (normalized == "decimal") {
+		// Preserve precision and scale from e.g. "decimal(10,2)"
+		auto param_start = hive_type.find('(');
+		auto param_end = hive_type.find(')');
+		if (param_start != string::npos && param_end != string::npos && param_end > param_start) {
+			auto params = hive_type.substr(param_start + 1, param_end - param_start - 1);
+			// Validate that params look like "digits,digits" before passing to DuckDB
+			auto comma = params.find(',');
+			if (comma != string::npos && comma > 0 && comma + 1 < params.size()) {
+				auto precision = params.substr(0, comma);
+				auto scale = params.substr(comma + 1);
+				auto is_digits = [](const string &s) {
+					return !s.empty() && s.find_first_not_of("0123456789") == string::npos;
+				};
+				if (is_digits(precision) && is_digits(scale)) {
+					return "DECIMAL(" + params + ")";
+				}
+			}
+		}
+		return "DECIMAL";
+	}
 	return "VARCHAR";
 }
 
@@ -110,11 +142,14 @@ static string BuildScanPath(const string &raw_location, MetastoreFormat format) 
 
 static unique_ptr<TableRef> MetastoreReplacementScan(ClientContext &context, ReplacementScanInput &input,
                                                      optional_ptr<ReplacementScanData> data) {
-	(void)data;
-	if (input.catalog_name.empty()) {
+	if (!data || input.catalog_name.empty()) {
 		return nullptr;
 	}
-	auto config_opt = LookupMetastoreAttachConfig(input.catalog_name);
+	auto &scan_data = static_cast<MetastoreReplacementScanData &>(*data);
+	if (!scan_data.storage_info) {
+		return nullptr;
+	}
+	auto config_opt = scan_data.storage_info->Lookup(input.catalog_name);
 	if (!config_opt.has_value() || config_opt->provider != MetastoreProviderType::HMS || input.schema_name.empty()) {
 		return nullptr;
 	}
@@ -134,7 +169,7 @@ static unique_ptr<TableRef> MetastoreReplacementScan(ClientContext &context, Rep
 	string scan_function;
 	switch (table_result.value.storage_descriptor.format) {
 	case MetastoreFormat::CSV:
-		scan_function = "read_csv_auto";
+		scan_function = "read_csv";
 		break;
 	case MetastoreFormat::Parquet:
 		Catalog::TryAutoLoad(context, "parquet");
@@ -185,7 +220,10 @@ static unique_ptr<Catalog> MetastoreAttach(optional_ptr<StorageExtensionInfo> st
 	if (connector_config.provider != MetastoreProviderType::HMS) {
 		throw InvalidInputException("Only HMS provider is supported in this build");
 	}
-	RegisterMetastoreAttachConfig(name, std::move(connector_config));
+	if (!storage_info) {
+		throw InternalException("MetastoreAttach: storage_info is null — extension load is incomplete");
+	}
+	static_cast<MetastoreStorageInfo &>(*storage_info).Register(name, std::move(connector_config));
 	info.path = ":memory:";
 	auto catalog = make_uniq<DuckCatalog>(db);
 	catalog->Initialize(false);
@@ -202,18 +240,31 @@ static unique_ptr<StorageExtension> CreateMetastoreStorageExtension() {
 	auto storage_extension = make_uniq<StorageExtension>();
 	storage_extension->attach = MetastoreAttach;
 	storage_extension->create_transaction_manager = MetastoreCreateTransactionManager;
+	storage_extension->storage_info = make_uniq<MetastoreStorageInfo>();
 	return storage_extension;
 }
 
 static void LoadInternal(ExtensionLoader &loader) {
 	auto &db_instance = loader.GetDatabaseInstance();
 	auto &config = DBConfig::GetConfig(db_instance);
-	config.storage_extensions["metastore"] = CreateMetastoreStorageExtension();
-	config.replacement_scans.emplace_back(MetastoreReplacementScan);
+
+	auto storage_ext = CreateMetastoreStorageExtension();
+	// Keep a raw pointer before moving ownership into the config map.
+	// Lifetime is safe: storage_info is owned by storage_ext which is owned by
+	// config.storage_extensions["metastore"] which lives as long as DatabaseInstance.
+	auto *ms_info = static_cast<MetastoreStorageInfo *>(storage_ext->storage_info.get());
+	config.storage_extensions["metastore"] = std::move(storage_ext);
+
+	// Register the replacement scan and pass a pointer to the per-instance info
+	// so it never reads from process-global state.
+	auto scan_data = make_uniq<MetastoreReplacementScanData>();
+	scan_data->storage_info = ms_info;
+	config.replacement_scans.emplace_back(MetastoreReplacementScan, std::move(scan_data));
+
 	config.AddExtensionOption("metastore_debug", "Enable diagnostic mode for metastore operations",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(false));
 
-	RegisterMetastoreFunctions(loader);
+	RegisterMetastoreFunctions(loader, ms_info);
 }
 
 void MetastoreExtension::Load(ExtensionLoader &loader) {

@@ -1,8 +1,10 @@
 #include "hms/hms_connector.hpp"
 #include "hms/hms_mapper.hpp"
+#include "hms/hms_retry.hpp"
 
 #include <arpa/inet.h>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <netdb.h>
@@ -10,6 +12,7 @@
 #include <sstream>
 #include <functional>
 #include <sys/socket.h>
+#include <thread>
 #include <unistd.h>
 
 namespace duckdb {
@@ -267,19 +270,26 @@ bool SendAll(int fd, const std::vector<uint8_t> &buf) {
 	return true;
 }
 
-MetastoreResult<int> ConnectSocket(const std::string &host, uint16_t port) {
+MetastoreResult<int> ConnectSocket(const HmsConfig &config) {
 	addrinfo hints;
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 
 	addrinfo *results = nullptr;
-	std::string port_string = std::to_string(port);
-	int gai_result = getaddrinfo(host.c_str(), port_string.c_str(), &hints, &results);
+	std::string port_string = std::to_string(config.port);
+	int gai_result = getaddrinfo(config.endpoint.c_str(), port_string.c_str(), &hints, &results);
 	if (gai_result != 0) {
 		return MetastoreResult<int>::Error(MetastoreErrorCode::Transient, "HMS DNS resolution failed",
 		                                   gai_strerror(gai_result), true);
 	}
+
+	// Apply the configured timeout to send/recv I/O operations.
+	// Note: connect() timeout is not controllable via SO_SNDTIMEO on all platforms;
+	// SO_SNDTIMEO applies to data-phase send after the TCP handshake completes.
+	timeval timeout;
+	timeout.tv_sec = static_cast<long>(config.connection_timeout_ms / 1000);
+	timeout.tv_usec = static_cast<long>((config.connection_timeout_ms % 1000) * 1000);
 
 	int fd = -1;
 	for (addrinfo *addr = results; addr != nullptr; addr = addr->ai_next) {
@@ -287,9 +297,6 @@ MetastoreResult<int> ConnectSocket(const std::string &host, uint16_t port) {
 		if (fd < 0) {
 			continue;
 		}
-		timeval timeout;
-		timeout.tv_sec = 10;
-		timeout.tv_usec = 0;
 		setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 		setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 		if (connect(fd, addr->ai_addr, addr->ai_addrlen) == 0) {
@@ -658,9 +665,9 @@ MetastoreResult<std::vector<std::string>> ParseStringListResult(ThriftReader &re
 }
 
 template <typename BuildArgs>
-MetastoreResult<int> InvokeRpc(const HmsConfig &config, const std::string &method_name, int32_t seqid,
-	                             BuildArgs build_args, std::function<MetastoreResult<int>(ThriftReader &)> parse_result) {
-	auto sock_result = ConnectSocket(config.endpoint, config.port);
+MetastoreResult<int> InvokeRpcOnce(const HmsConfig &config, const std::string &method_name, int32_t seqid,
+	                               BuildArgs build_args, std::function<MetastoreResult<int>(ThriftReader &)> parse_result) {
+	auto sock_result = ConnectSocket(config);
 	if (!sock_result.IsOk()) {
 		return MetastoreResult<int>::Error(sock_result.error.code, std::move(sock_result.error.message),
 		                                  std::move(sock_result.error.detail), sock_result.error.retryable);
@@ -696,6 +703,24 @@ MetastoreResult<int> InvokeRpc(const HmsConfig &config, const std::string &metho
 		return MetastoreResult<int>::Error(MetastoreErrorCode::Transient, "HMS reply header mismatch", "", true);
 	}
 	return parse_result(reader);
+}
+
+template <typename BuildArgs>
+MetastoreResult<int> InvokeRpc(const HmsConfig &config, const std::string &method_name, int32_t seqid,
+	                           BuildArgs build_args, std::function<MetastoreResult<int>(ThriftReader &)> parse_result) {
+	HmsRetryPolicy retry;
+	MetastoreResult<int> last_result;
+	for (uint32_t attempt = 1; retry.ShouldRetry(attempt - 1); attempt++) {
+		uint32_t delay_ms = retry.ComputeDelay(attempt - 1);
+		if (delay_ms > 0) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+		}
+		last_result = InvokeRpcOnce(config, method_name, seqid, build_args, parse_result);
+		if (last_result.IsOk() || !last_result.error.retryable) {
+			return last_result;
+		}
+	}
+	return last_result;
 }
 
 }
@@ -747,6 +772,9 @@ MetastoreResult<std::vector<std::string>> HmsConnector::ListTables(const std::st
 		                       return MetastoreResult<int>::Success(0);
 	                       });
 	if (!status.IsOk()) {
+		if (status.error.code == MetastoreErrorCode::NotFound) {
+			return MetastoreResult<std::vector<std::string>>::Success({});
+		}
 		return MetastoreResult<std::vector<std::string>>::Error(status.error.code, std::move(status.error.message),
 		                                                       std::move(status.error.detail), status.error.retryable);
 	}

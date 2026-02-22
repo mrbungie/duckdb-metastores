@@ -5,18 +5,19 @@
 # Require metastore extension to be loaded
 require metastore
 
-# Test 1: metastore_scan should parse and bind with valid arguments
-# Should return empty result set with correct schema
-statement ok
+# Test 1: metastore_scan with valid arguments but no ATTACH produces catalog-not-found error
+statement error
 SELECT * FROM metastore_scan('test_catalog', 'test_schema', 'test_table')
+----
+not attached as metastore
 
-# Test 2: Verify column count and names
-query IIIII
+# Test 2: Catalog not found error (not an arg error) proves the function exists
+statement error
 SELECT COUNT(*) FROM (
   SELECT * FROM metastore_scan('catalog1', 'schema1', 'table1')
 )
 ----
-0
+not attached as metastore
 
 # Test 3: metastore_scan with missing required arguments should fail
 statement error
