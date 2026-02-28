@@ -196,7 +196,8 @@ static void BindUnderlyingFunction(ClientContext &context, MetastoreReadBindData
 			}
 			AddNamedConstant(arguments, "columns", Value::STRUCT(std::move(column_types)));
 		}
-	} else if (bind_data.table.storage_descriptor.format == MetastoreFormat::Parquet && bind_data.is_partitioned) {
+	}
+	if (bind_data.is_partitioned) {
 		AddNamedConstant(arguments, "hive_partitioning", Value::BOOLEAN(true));
 	}
 
@@ -300,6 +301,11 @@ void MetastoreReadPushdownComplexFilter(ClientContext &context, LogicalGet &get,
 	}
 
 	BindUnderlyingFunction(context, bind_data);
+
+	// Delegate to DuckDB's native multi-file reader to execute complex functions in-memory against the partitions
+	if (bind_data.underlying_function.pushdown_complex_filter) {
+		bind_data.underlying_function.pushdown_complex_filter(context, get, bind_data.underlying_bind_data.get(), filters);
+	}
 }
 
 
