@@ -26,8 +26,14 @@ jobs:
         shell: bash
 
     steps:
-      - name: Install Ninja
-        run: sudo apt-get update -y -qq && sudo apt-get install -y -qq ninja-build netcat-openbsd
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -y -qq
+          sudo apt-get install -y -qq \
+            build-essential \
+            pkg-config \
+            ninja-build \
+            netcat-openbsd
 
       - uses: actions/checkout@v4
         with:
