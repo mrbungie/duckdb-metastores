@@ -17,7 +17,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 include_directories(src/include src src/providers)
 
-set(EXTENSION_SOURCES src/metastore_extension.cpp src/metastore_functions.cpp src/metastore_runtime.cpp src/auth/metastore_secret_bridge.cpp src/planner/metastore_planner.cpp src/providers/hms/hms_connector.cpp src/providers/hms/hms_mapper.cpp)
+set(EXTENSION_SOURCES src/metastore_extension.cpp src/metastore_functions.cpp src/metastore_runtime.cpp src/auth/metastore_secret_bridge.cpp src/planner/metastore_planner.cpp src/providers/hms/hms_connector.cpp src/providers/hms/hms_mapper.cpp src/functions/metastore_read.cpp)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
