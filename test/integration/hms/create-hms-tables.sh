@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+umask 000
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 COMPOSE_FILE="${COMPOSE_FILE:-${ROOT_DIR}/test/integration/hms/docker-compose.yml}"
 HMS_SHARED_DIR="${HMS_SHARED_DIR:-${ROOT_DIR}/build/hms_shared}"
@@ -9,6 +11,7 @@ HMS_TABLE_COUNT="${HMS_TABLE_COUNT:-5}"
 BOOTSTRAP_SQL="/tmp/hms_bootstrap_fixture.sql"
 
 mkdir -p "${HMS_SHARED_DIR}"
+chmod -R 0777 "${HMS_SHARED_DIR}"
 
 if ! docker info >/dev/null 2>&1; then
 	echo "Docker daemon is not reachable." >&2
@@ -42,6 +45,7 @@ for i in $(seq 1 "${HMS_TABLE_COUNT}"); do
 	tbl_path="${HMS_SHARED_DIR}/${HMS_DB_NAME}/${tbl}"
 	rm -rf "${tbl_path}" "${tbl_path}_part"
 	mkdir -p "${tbl_path}" "${tbl_path}_part/year=2023/month=10"
+	chmod -R 0777 "${tbl_path}" "${tbl_path}_part"
 	sql_payload+="DROP TABLE IF EXISTS ${tbl};\n"
 	sql_payload+="CREATE EXTERNAL TABLE ${tbl} (id INT, value STRING) ROW FORMAT DELIMITED FIELDS TERMINATED BY ',' STORED AS TEXTFILE LOCATION 'file:${tbl_path}';\n"
 	sql_payload+="INSERT INTO TABLE ${tbl} VALUES (${i}, 'v${i}');\n"
@@ -55,6 +59,7 @@ part_tbl="fixture_tbl_partitioned"
 part_tbl_path="${HMS_SHARED_DIR}/${HMS_DB_NAME}/${part_tbl}"
 rm -rf "${part_tbl_path}"
 mkdir -p "${part_tbl_path}"
+chmod -R 0777 "${part_tbl_path}"
 sql_payload+="DROP TABLE IF EXISTS ${part_tbl};\n"
 sql_payload+="CREATE EXTERNAL TABLE ${part_tbl} (id INT, value STRING) PARTITIONED BY (year STRING, month STRING) ROW FORMAT DELIMITED FIELDS TERMINATED BY ',' STORED AS TEXTFILE LOCATION 'file:${part_tbl_path}';\n"
 sql_payload+="ALTER TABLE ${part_tbl} ADD PARTITION (year='2023', month='10') LOCATION 'file:${part_tbl_path}/year=2023/month=10';\n"
@@ -73,6 +78,7 @@ part_tbl_parquet="fixture_tbl_partitioned_parquet"
 part_tbl_parquet_path="${HMS_SHARED_DIR}/${HMS_DB_NAME}/${part_tbl_parquet}"
 rm -rf "${part_tbl_parquet_path}"
 mkdir -p "${part_tbl_parquet_path}"
+chmod -R 0777 "${part_tbl_parquet_path}"
 sql_payload+="DROP TABLE IF EXISTS ${part_tbl_parquet};\n"
 sql_payload+="CREATE EXTERNAL TABLE ${part_tbl_parquet} (id INT, value STRING) PARTITIONED BY (year STRING, month STRING) STORED AS PARQUET LOCATION 'file:${part_tbl_parquet_path}';\n"
 sql_payload+="ALTER TABLE ${part_tbl_parquet} ADD PARTITION (year='2023', month='10') LOCATION 'file:${part_tbl_parquet_path}/year=2023/month=10';\n"
