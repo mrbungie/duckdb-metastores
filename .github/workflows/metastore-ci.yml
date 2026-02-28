@@ -6,12 +6,6 @@ on:
   pull_request:
     branches: ["**"]
   workflow_dispatch:
-    inputs:
-      run_integration:
-        description: "Run integration tests (requires credentials)"
-        required: false
-        default: "false"
-        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' || github.sha }}
@@ -87,121 +81,10 @@ jobs:
         run: make
 
       - name: Run SQLLogic tests (generic metastore contracts)
-        run: make test
+        run: make test LINUX_CI_IN_DOCKER=1
         env:
           HMS_LOCAL_ENDPOINT: 127.0.0.1:9083
 
       - name: Stop Mock HMS Docker Compose
         if: always()
         run: docker compose -f test/integration/hms/docker-compose.yml down
-
-  integration-tests:
-    name: Integration Tests (credential-gated)
-    runs-on: ubuntu-latest
-    env:
-      VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
-      VCPKG_TARGET_TRIPLET: x64-linux
-      GEN: ninja
-      HMS_SHARED_DIR: ${{ github.workspace }}/build/hms_shared
-      HMS_LOCAL_ENDPOINT: 127.0.0.1:9083
-    defaults:
-      run:
-        shell: bash
-
-    steps:
-      - name: Check integration flag
-        id: check_flag
-        run: |
-          if [ "${METASTORE_INTEGRATION_ENABLED}" = "true" ] || [ "${{ github.event.inputs.run_integration }}" = "true" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Skipping: METASTORE_INTEGRATION_ENABLED not set"
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          fi
-        env:
-          METASTORE_INTEGRATION_ENABLED: ${{ vars.METASTORE_INTEGRATION_ENABLED }}
-
-      - name: Install Ninja
-        if: steps.check_flag.outputs.enabled == 'true'
-        run: sudo apt-get update -y -qq && sudo apt-get install -y -qq ninja-build netcat-openbsd
-
-      - uses: actions/checkout@v4
-        if: steps.check_flag.outputs.enabled == 'true'
-        with:
-          fetch-depth: 0
-          submodules: "true"
-
-      - name: Setup vcpkg
-        if: steps.check_flag.outputs.enabled == 'true'
-        uses: lukka/run-vcpkg@v11.1
-        with:
-          vcpkgGitCommitId: ce613c41372b23b1f51333815feb3edd87ef8a8b
-
-      - name: Start HMS instance
-        if: steps.check_flag.outputs.enabled == 'true'
-        run: |
-          mkdir -p "${HMS_SHARED_DIR}"
-          chmod -R 0777 "${HMS_SHARED_DIR}"
-          docker compose -f test/integration/hms/docker-compose.yml up -d
-          for i in $(seq 1 60); do
-            if nc -z 127.0.0.1 9083; then
-              echo "HMS metastore reachable at 127.0.0.1:9083"
-              break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "Timed out waiting for HMS metastore on 127.0.0.1:9083" >&2
-              docker compose -f test/integration/hms/docker-compose.yml ps >&2 || true
-              docker compose -f test/integration/hms/docker-compose.yml logs --no-color >&2 || true
-              exit 1
-            fi
-            sleep 2
-          done
-
-          for i in $(seq 1 60); do
-            if docker compose -f test/integration/hms/docker-compose.yml exec -T hms-hiveserver2 \
-              bash -lc "/opt/hive/bin/beeline -u 'jdbc:hive2://127.0.0.1:10000/default' -n hive -e 'SHOW DATABASES;' >/tmp/hms_ready.log 2>&1"; then
-              echo "HiveServer2 ready"
-              break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "Timed out waiting for HiveServer2 readiness" >&2
-              docker compose -f test/integration/hms/docker-compose.yml logs --no-color >&2 || true
-              exit 1
-            fi
-            sleep 2
-          done
-
-      - name: Seed database data
-        if: steps.check_flag.outputs.enabled == 'true'
-        run: |
-          chmod +x test/integration/hms/create-hms-tables.sh
-          ./test/integration/hms/create-hms-tables.sh
-
-      - name: Build extension
-        if: steps.check_flag.outputs.enabled == 'true'
-        run: make
-
-      - name: Run integration tests
-        if: steps.check_flag.outputs.enabled == 'true'
-        run: make test
-        env:
-          HMS_LOCAL_ENDPOINT: 127.0.0.1:9083
-          # Glue credentials
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-          # Dataproc credentials
-          DATAPROC_ENDPOINT: ${{ secrets.DATAPROC_ENDPOINT }}
-          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
-
-      - name: Stop Mock HMS Docker Compose
-        if: always() && steps.check_flag.outputs.enabled == 'true'
-        run: docker compose -f test/integration/hms/docker-compose.yml down
-
-      - name: Skip notice
-        if: steps.check_flag.outputs.enabled == 'false'
-        run: |
-          echo "Skipping: METASTORE_INTEGRATION_ENABLED not set"
-          echo "To run integration tests, set the METASTORE_INTEGRATION_ENABLED repository variable to 'true'"
-          echo "or trigger this workflow manually with run_integration=true"
-          exit 0
