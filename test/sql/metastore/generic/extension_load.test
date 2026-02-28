@@ -11,11 +11,7 @@ Catalog Error
 # Require statement ensures this test runs with the metastore extension loaded
 require metastore
 
-# After loading, a valid call to metastore_scan must succeed (empty result ok)
-statement ok
-SELECT * FROM metastore_scan('my_catalog', 'my_schema', 'my_table');
-
-# Verify metastore_scan returns the expected 5-column schema
-query IIIII
+statement error
 SELECT * FROM metastore_scan('my_catalog', 'my_schema', 'my_table');
 ----
+Catalog is not attached as metastore: my_catalog

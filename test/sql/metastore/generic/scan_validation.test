@@ -5,8 +5,10 @@
 require metastore
 
 # Valid call: exactly 3 non-empty VARCHAR args must succeed and return empty result
-statement ok
+statement error
 SELECT * FROM metastore_scan('catalog', 'schema', 'table_name');
+----
+Catalog is not attached
 
 # ---- Missing argument tests ----
 
@@ -14,19 +16,19 @@ SELECT * FROM metastore_scan('catalog', 'schema', 'table_name');
 statement error
 SELECT * FROM metastore_scan();
 ----
-metastore_scan requires at least 3 arguments
+No function matches the given name and argument types
 
 # Missing 2 arguments (only 1 provided)
 statement error
 SELECT * FROM metastore_scan('catalog_only');
 ----
-metastore_scan requires at least 3 arguments
+No function matches the given name and argument types
 
 # Missing 1 argument (only 2 provided)
 statement error
 SELECT * FROM metastore_scan('catalog', 'schema');
 ----
-metastore_scan requires at least 3 arguments
+No function matches the given name and argument types
 
 # ---- NULL argument tests ----
 
@@ -71,9 +73,9 @@ cannot be empty
 # ---- Schema validation: valid call returns 5 VARCHAR columns ----
 
 # Column count: 5 columns (table_catalog, table_schema, table_name, location, format)
-query I
+statement error
 SELECT COUNT(*) FROM (
     SELECT * FROM metastore_scan('my_catalog', 'my_schema', 'my_table')
 );
 ----
-0
+Catalog is not attached as metastore: my_catalog

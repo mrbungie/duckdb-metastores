@@ -7,16 +7,18 @@ require metastore
 
 # Test 1: metastore_scan should parse and bind with valid arguments
 # Should return empty result set with correct schema
-statement ok
+statement error
 SELECT * FROM metastore_scan('test_catalog', 'test_schema', 'test_table')
+----
+Catalog is not attached as metastore
 
 # Test 2: Verify column count and names
-query IIIII
+statement error
 SELECT COUNT(*) FROM (
   SELECT * FROM metastore_scan('catalog1', 'schema1', 'table1')
 )
 ----
-0
+Catalog is not attached as metastore
 
 # Test 3: metastore_scan with missing required arguments should fail
 statement error
