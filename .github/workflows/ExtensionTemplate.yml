@@ -27,10 +27,19 @@ jobs:
         shell: bash
 
     steps:
-      - name: Install Ninja
-        shell: bash
-        run: sudo apt-get update -y -qq && sudo apt-get install -y -qq ninja-build
-
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -y -qq
+          sudo apt-get install -y -qq \
+            build-essential \
+            pkg-config \
+            ninja-build \
+            netcat-openbsd \
+            libssl-dev \
+            zip \
+            unzip \
+            curl
+      
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
