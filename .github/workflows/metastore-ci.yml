@@ -43,10 +43,15 @@ jobs:
         with:
           vcpkgGitCommitId: ce613c41372b23b1f51333815feb3edd87ef8a8b
 
-      - name: Start Mock HMS Docker Compose for local tests
+      - name: Start HMS instance
         run: |
           docker compose -f test/integration/hms/docker-compose.yml up -d
           sleep 10
+
+      - name: Seed database data
+        run: | 
+          chmod +x scripts/create-hms-tables.sh
+          ./scripts/create-hms-tables.sh
 
       - name: Build extension
         run: make
@@ -98,10 +103,15 @@ jobs:
         with:
           vcpkgGitCommitId: ce613c41372b23b1f51333815feb3edd87ef8a8b
 
-      - name: Start Mock HMS Docker Compose for local tests
+      - name: Start HMS instance
         run: |
           docker compose -f test/integration/hms/docker-compose.yml up -d
           sleep 10
+
+      - name: Seed database data
+        run: | 
+          chmod +x scripts/create-hms-tables.sh
+          ./scripts/create-hms-tables.sh
 
       - name: Build extension
         if: steps.check_flag.outputs.enabled == 'true'
