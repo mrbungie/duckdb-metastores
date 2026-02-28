@@ -4,7 +4,7 @@ set -euo pipefail
 # This script mimics the postgres scanner setup: it assumes the HMS server is ALREADY running.
 # It simply connects via Beeline and populates the schema.
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HMS_SHARED_DIR="${HMS_SHARED_DIR:-${ROOT_DIR}/build/hms_shared}"
 HMS_DB_NAME="${HMS_DB_NAME:-metastore_ci}"
 HMS_HOST="${HMS_HOST:-127.0.0.1}"

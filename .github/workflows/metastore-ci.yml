@@ -50,8 +50,8 @@ jobs:
 
       - name: Seed database data
         run: | 
-          chmod +x scripts/create-hms-tables.sh
-          ./scripts/create-hms-tables.sh
+          chmod +x test/integration/create-hms-tables.sh
+          ./test/integration/create-hms-tables.sh
 
       - name: Build extension
         run: make
@@ -110,8 +110,8 @@ jobs:
 
       - name: Seed database data
         run: | 
-          chmod +x scripts/create-hms-tables.sh
-          ./scripts/create-hms-tables.sh
+          chmod +x test/integration/create-hms-tables.sh
+          ./test/integration/create-hms-tables.sh
 
       - name: Build extension
         if: steps.check_flag.outputs.enabled == 'true'
