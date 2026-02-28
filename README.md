@@ -52,6 +52,56 @@ Different tests can be created for DuckDB extensions. The primary way of testing
 make test
 ```
 
+### Environment setup (important)
+CI runs this project with Ninja enabled. To match CI locally, set this before building/running tests:
+
+```sh
+export GEN=ninja
+```
+
+If you are using VCPKG dependencies, also make sure `VCPKG_TOOLCHAIN_PATH` is exported (see the build section above).
+
+Then run:
+
+```sh
+make release
+make test
+```
+
+If you run Hive Metastore integration tests, also make sure the integration environment variables are set:
+
+```sh
+export HMS_ENDPOINT="<host:port>"
+export AWS_ACCESS_KEY_ID="..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_REGION="..."
+export DATAPROC_ENDPOINT="..."
+export GOOGLE_APPLICATION_CREDENTIALS_JSON='{"type":"service_account",...}'
+```
+
+HMS local dependency-backed test flow (local only helper):
+
+```sh
+test/integration/hms/run_hms_tests.sh
+```
+
+The script above is for local developer runs. CI does not use it.
+In GitHub Actions, the flow is explicit: `docker compose up` -> `test/integration/hms/create-hms-tables.sh` -> `make test LINUX_CI_IN_DOCKER=1` with integration credentials exported in the job environment.
+
+Only run the targeted HMS integration SQL test:
+
+```sh
+HMS_TEST_MODE=integration test/integration/hms/run_hms_tests.sh
+```
+
+Optional HMS script variables (used by local integration scripts):
+
+```sh
+export HMS_SHARED_DIR="/tmp/hms-shared"
+export HMS_TABLE_COUNT=100
+export HMS_DB_NAME="metastore_ci"
+```
+
 ### Installing the deployed binaries
 To install your extension binaries from S3, you will need to do two things. Firstly, DuckDB should be launched with the
 `allow_unsigned_extensions` option set to true. How to set this will depend on the client you're using. Some examples:

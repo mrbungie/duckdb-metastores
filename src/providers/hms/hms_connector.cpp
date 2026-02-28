@@ -10,6 +10,7 @@
 #include <sstream>
 #include <functional>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 namespace duckdb {
@@ -817,6 +818,8 @@ MetastoreResult<MetastoreTable> HmsConnector::GetTable(const std::string &namesp
 MetastoreResult<std::vector<MetastorePartitionValue>>
 HmsConnector::ListPartitions(const std::string &namespace_name, const std::string &table_name,
                              const std::string &predicate) {
+	(void)predicate;
+
 	std::vector<std::string> partition_names;
 	auto status = InvokeRpc(config_, "get_partition_names", 4,
 	                       [&](ThriftWriter &writer) {
@@ -845,11 +848,28 @@ HmsConnector::ListPartitions(const std::string &namespace_name, const std::strin
 		                                                                  std::move(status.error.detail),
 		                                                                  status.error.retryable);
 	}
+	auto table_result = GetTable(namespace_name, table_name);
+	if (!table_result.IsOk()) {
+		return MetastoreResult<std::vector<MetastorePartitionValue>>::Error(table_result.error.code,
+		                                                                  std::move(table_result.error.message),
+		                                                                  std::move(table_result.error.detail),
+		                                                                  table_result.error.retryable);
+	}
+	const auto &table_location = table_result.value.storage_descriptor.location;
+	const bool table_location_has_trailing_slash = !table_location.empty() && table_location.back() == '/';
+
 	std::vector<MetastorePartitionValue> result;
 	result.reserve(partition_names.size());
 	for (auto &name : partition_names) {
 		MetastorePartitionValue pv;
 		pv.values = ParsePartitionNameValues(name);
+		if (!table_location.empty()) {
+			if (table_location_has_trailing_slash) {
+				pv.location = table_location + name;
+			} else {
+				pv.location = table_location + "/" + name;
+			}
+		}
 		result.push_back(std::move(pv));
 	}
 	return MetastoreResult<std::vector<MetastorePartitionValue>>::Success(std::move(result));

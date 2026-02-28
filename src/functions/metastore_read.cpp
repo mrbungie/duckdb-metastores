@@ -262,7 +262,14 @@ unique_ptr<FunctionData> MetastoreReadBind(ClientContext &context, TableFunction
 		auto parts_result = bind_data->connector->ListPartitions(schema, table_name, "");
 		if (parts_result.IsOk()) {
 			for (auto &part : parts_result.value) {
-				bind_data->scan_files.push_back(BuildScanPath(part.location, bind_data->table.storage_descriptor.format));
+				auto scan_path = BuildScanPath(part.location, bind_data->table.storage_descriptor.format);
+				if (!scan_path.empty()) {
+					bind_data->scan_files.push_back(std::move(scan_path));
+				}
+			}
+			if (bind_data->scan_files.empty()) {
+				bind_data->scan_files.push_back(
+				    BuildScanPath(bind_data->table.storage_descriptor.location, bind_data->table.storage_descriptor.format));
 			}
 		} else {
 			throw BinderException("Failed to list partitions: %s", parts_result.error.message);
@@ -297,7 +304,14 @@ void MetastoreReadPushdownComplexFilter(ClientContext &context, LogicalGet &get,
 	if (parts_result.IsOk()) {
 		bind_data.scan_files.clear();
 		for (auto &part : parts_result.value) {
-			bind_data.scan_files.push_back(BuildScanPath(part.location, bind_data.table.storage_descriptor.format));
+			auto scan_path = BuildScanPath(part.location, bind_data.table.storage_descriptor.format);
+			if (!scan_path.empty()) {
+				bind_data.scan_files.push_back(std::move(scan_path));
+			}
+		}
+		if (bind_data.scan_files.empty()) {
+			bind_data.scan_files.push_back(
+			    BuildScanPath(bind_data.table.storage_descriptor.location, bind_data.table.storage_descriptor.format));
 		}
 	}
 

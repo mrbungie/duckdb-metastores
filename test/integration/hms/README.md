@@ -5,7 +5,15 @@ This directory contains Docker-backed HMS integration checks.
 Run locally:
 
 ```bash
-./scripts/run_hms_integration.sh
+./test/integration/hms/run_hms_tests.sh
+```
+
+This script is for local testing convenience. CI uses explicit workflow steps (`docker compose`, `create-hms-tables.sh`, then `make test`).
+
+To run only the targeted HMS integration SQL test:
+
+```bash
+HMS_TEST_MODE=integration ./test/integration/hms/run_hms_tests.sh
 ```
 
 What it validates:
@@ -14,10 +22,8 @@ What it validates:
 - Metastore Thrift endpoint is reachable on port `9083`
 - Startup log marker is present (`Starting Hive Metastore Server`)
 
-Optional extended C++ harness:
+Seed fixtures only (when the HMS compose stack is already running):
 
 ```bash
-HMS_RUN_CPP_HARNESS=true ./scripts/run_hms_integration.sh
+./test/integration/hms/create-hms-tables.sh
 ```
-
-The harness file `test/integration/hms/hms_integration_harness.cpp` contains checks for endpoint parsing, mapper/retry behavior, and current connector stub contract. It is disabled by default because direct standalone compilation requires additional DuckDB link dependencies.
