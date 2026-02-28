@@ -4,24 +4,21 @@
 
 require metastore
 
-# ---- Missing PROVIDER option ----
+# ---- Missing TYPE option ----
+statement error
+ATTACH 'thrift://localhost:9083' AS ms;
+----
+IO Error: Cannot open file "thrift://localhost:9083": No such file or directory
+
+# ---- HMS: thrift+http(s) endpoint is accepted ----
 statement ok
-ATTACH 'metastore_db' AS ms (TYPE metastore);
+ATTACH 'thrift+http://localhost:9083' AS ms2 (TYPE metastore);
 
-# ---- Unrecognized PROVIDER value ----
-statement error
-ATTACH 'metastore_db' AS ms2 (TYPE metastore, PROVIDER 'unknown_provider');
-----
-Supported providers
+statement ok
+DETACH ms2;
 
-# ---- HMS: missing ENDPOINT ----
+# ---- Glue: REGION inferred from ARN ----
 statement error
-ATTACH 'metastore_db' AS ms3 (TYPE metastore, PROVIDER 'hms');
+ATTACH 'arn:aws:glue:us-east-1:123456789012:catalog' AS ms3 (TYPE metastore);
 ----
-ENDPOINT
-
-# ---- Glue: missing REGION ----
-statement error
-ATTACH 'metastore_db' AS ms4 (TYPE metastore, PROVIDER 'glue');
-----
-REGION
+Only HMS provider is supported in this build

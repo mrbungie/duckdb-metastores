@@ -4,6 +4,8 @@
 
 require metastore
 
+require-env HMS_LOCAL_ENDPOINT
+
 test-env HMS_LOCAL_ENDPOINT 127.0.0.1:9083
 
 

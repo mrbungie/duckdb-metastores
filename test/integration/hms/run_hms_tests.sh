@@ -9,12 +9,14 @@ HMS_TABLE_COUNT="${HMS_TABLE_COUNT:-5}"
 HMS_TEST_MODE="${HMS_TEST_MODE:-all}"
 KEEP_HMS="${KEEP_HMS:-0}"
 GEN="${GEN:-ninja}"
+HMS_LOCAL_ENDPOINT="${HMS_LOCAL_ENDPOINT:-127.0.0.1:9083}"
 
 export COMPOSE_FILE
 export HMS_SHARED_DIR
 export HMS_DB_NAME
 export HMS_TABLE_COUNT
 export GEN
+export HMS_LOCAL_ENDPOINT
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 	cat <<'EOF'

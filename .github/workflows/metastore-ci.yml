@@ -18,9 +18,13 @@ jobs:
     env:
       VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
       VCPKG_TARGET_TRIPLET: x64-linux
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg_cache
+      VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}/vcpkg_cache,readwrite"
       GEN: ninja
       HMS_SHARED_DIR: ${{ github.workspace }}/build/hms_shared
       HMS_LOCAL_ENDPOINT: 127.0.0.1:9083
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 500M
     defaults:
       run:
         shell: bash
@@ -34,10 +38,10 @@ jobs:
             pkg-config \
             ninja-build \
             netcat-openbsd \
-            libssl-dev \
             zip \
             unzip \
-            curl
+            curl \
+            ccache
 
       - uses: actions/checkout@v4
         with:
@@ -49,8 +53,37 @@ jobs:
         with:
           vcpkgGitCommitId: ce613c41372b23b1f51333815feb3edd87ef8a8b
 
+      - name: Cache ccache files
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
+
+      - name: Cache vcpkg dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/vcpkg_cache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+
+      - name: Setup ccache
+        run: |
+          mkdir -p "$CCACHE_DIR" "$VCPKG_DEFAULT_BINARY_CACHE"
+          ccache --zero-stats || true
+          ccache --show-stats || true
+
       - name: Build extension
-        run: make
+        run: |
+          export CC="ccache gcc"
+          export CXX="ccache g++"
+          make
+
+      - name: Show ccache statistics
+        if: always()
+        run: ccache --show-stats || true
 
       - name: Start HMS instance
         run: |

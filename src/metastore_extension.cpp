@@ -188,8 +188,8 @@ static unique_ptr<Catalog> MetastoreAttach(optional_ptr<StorageExtensionInfo> st
 	for (auto &entry : info.options) {
 		attach_kv[entry.first] = entry.second;
 	}
-	if (attach_kv.find("PROVIDER") == attach_kv.end() && !info.path.empty() && info.path != ":memory:") {
-		attach_kv["PROVIDER"] = Value("hms");
+	// The URL/endpoint comes from the ATTACH path
+	if (!info.path.empty() && info.path != ":memory:") {
 		attach_kv["ENDPOINT"] = Value(info.path);
 	}
 	auto connector_config = ResolveConnectorConfig(attach_kv);
