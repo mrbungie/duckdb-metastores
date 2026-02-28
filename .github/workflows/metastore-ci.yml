@@ -80,8 +80,8 @@ jobs:
           chmod +x test/integration/hms/create-hms-tables.sh
           ./test/integration/hms/create-hms-tables.sh
 
-      - name: Run SQLLogic tests (host-local metastore contracts)
-        run: ./build/release/test/unittest "test/sql/metastore/*"
+      - name: Run SQLLogic tests (generic metastore contracts)
+        run: make test LINUX_CI_IN_DOCKER=1
         env:
           HMS_LOCAL_ENDPOINT: 127.0.0.1:9083
 

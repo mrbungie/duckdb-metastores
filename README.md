@@ -86,7 +86,7 @@ test/integration/hms/run_hms_tests.sh
 ```
 
 The script above is for local developer runs. CI does not use it.
-In GitHub Actions, the flow is explicit: `make` -> `docker compose up` -> `test/integration/hms/create-hms-tables.sh` -> `./build/release/test/unittest "test/sql/metastore/*"` (runner-local test execution; Docker only provides HMS dependencies).
+In GitHub Actions, the flow is explicit: `docker compose up` -> `test/integration/hms/create-hms-tables.sh` -> `make test LINUX_CI_IN_DOCKER=1` with integration credentials exported in the job environment.
 
 Only run the targeted HMS integration SQL test:
 

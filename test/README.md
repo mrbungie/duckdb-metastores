@@ -49,4 +49,4 @@ CI does not use the local helper runner script. In GitHub Actions the flow is ex
 
 1. `docker compose -f test/integration/hms/docker-compose.yml up -d`
 2. `test/integration/hms/create-hms-tables.sh`
-3. `./build/release/test/unittest "test/sql/metastore/*"`
+3. `make test LINUX_CI_IN_DOCKER=1`
