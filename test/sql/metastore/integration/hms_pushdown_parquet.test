@@ -1,0 +1,23 @@
+# name: test/sql/metastore/integration/hms_pushdown_parquet.test
+# description: end to end test of partition pushdown against a live HMS parquet table
+# group: [metastore]
+
+require metastore
+
+require parquet
+
+test-env HMS_LOCAL_ENDPOINT 127.0.0.1:9083
+
+statement ok
+ATTACH 'thrift://${HMS_LOCAL_ENDPOINT}' AS hms (TYPE metastore);
+
+query II
+SELECT year, value FROM hms.metastore_ci.fixture_tbl_partitioned_parquet WHERE year='2023';
+----
+2023	old_parquet
+
+query II
+SELECT year, value FROM hms.metastore_ci.fixture_tbl_partitioned_parquet WHERE year='2023' OR year='2024' ORDER BY year;
+----
+2023	old_parquet
+2024	new_parquet

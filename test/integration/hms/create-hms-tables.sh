@@ -61,6 +61,31 @@ sql_payload+="ALTER TABLE ${part_tbl} ADD PARTITION (year='2023', month='10') LO
 sql_payload+="ALTER TABLE ${part_tbl} ADD PARTITION (year='2024', month='01') LOCATION 'file:${part_tbl_path}/year=2024/month=01';\n"
 sql_payload+="INSERT INTO TABLE ${part_tbl} PARTITION(year='2023', month='10') VALUES (1, 'old');\n"
 sql_payload+="INSERT INTO TABLE ${part_tbl} PARTITION(year='2024', month='01') VALUES (2, 'new');\n"
+for extra_idx in $(seq 1 8); do
+	extra_year=$((2010 + extra_idx))
+	extra_month=$(printf "%02d" "${extra_idx}")
+	extra_id=$((100 + extra_idx))
+	sql_payload+="ALTER TABLE ${part_tbl} ADD PARTITION (year='${extra_year}', month='${extra_month}') LOCATION 'file:${part_tbl_path}/year=${extra_year}/month=${extra_month}';\n"
+	sql_payload+="INSERT INTO TABLE ${part_tbl} PARTITION(year='${extra_year}', month='${extra_month}') VALUES (${extra_id}, 'extra_${extra_idx}');\n"
+done
+
+part_tbl_parquet="fixture_tbl_partitioned_parquet"
+part_tbl_parquet_path="${HMS_SHARED_DIR}/${HMS_DB_NAME}/${part_tbl_parquet}"
+rm -rf "${part_tbl_parquet_path}"
+mkdir -p "${part_tbl_parquet_path}"
+sql_payload+="DROP TABLE IF EXISTS ${part_tbl_parquet};\n"
+sql_payload+="CREATE EXTERNAL TABLE ${part_tbl_parquet} (id INT, value STRING) PARTITIONED BY (year STRING, month STRING) STORED AS PARQUET LOCATION 'file:${part_tbl_parquet_path}';\n"
+sql_payload+="ALTER TABLE ${part_tbl_parquet} ADD PARTITION (year='2023', month='10') LOCATION 'file:${part_tbl_parquet_path}/year=2023/month=10';\n"
+sql_payload+="ALTER TABLE ${part_tbl_parquet} ADD PARTITION (year='2024', month='01') LOCATION 'file:${part_tbl_parquet_path}/year=2024/month=01';\n"
+sql_payload+="INSERT INTO TABLE ${part_tbl_parquet} PARTITION(year='2023', month='10') VALUES (11, 'old_parquet');\n"
+sql_payload+="INSERT INTO TABLE ${part_tbl_parquet} PARTITION(year='2024', month='01') VALUES (22, 'new_parquet');\n"
+for extra_idx in $(seq 1 8); do
+	extra_year=$((2010 + extra_idx))
+	extra_month=$(printf "%02d" "${extra_idx}")
+	extra_id=$((200 + extra_idx))
+	sql_payload+="ALTER TABLE ${part_tbl_parquet} ADD PARTITION (year='${extra_year}', month='${extra_month}') LOCATION 'file:${part_tbl_parquet_path}/year=${extra_year}/month=${extra_month}';\n"
+	sql_payload+="INSERT INTO TABLE ${part_tbl_parquet} PARTITION(year='${extra_year}', month='${extra_month}') VALUES (${extra_id}, 'extra_parquet_${extra_idx}');\n"
+done
 
 printf '%b' "${sql_payload}" > "${BOOTSTRAP_SQL}"
 

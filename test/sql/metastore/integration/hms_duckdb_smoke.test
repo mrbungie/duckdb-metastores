@@ -4,6 +4,9 @@
 
 require metastore
 
+test-env HMS_LOCAL_ENDPOINT 127.0.0.1:9083
+
+
 statement ok
 CREATE TEMP TABLE duckdb_smoke(i INTEGER);
 
@@ -16,7 +19,7 @@ SELECT SUM(i) FROM duckdb_smoke;
 18
 
 statement ok
-ATTACH 'thrift://127.0.0.1:9083' AS hms (TYPE metastore);
+ATTACH 'thrift://${HMS_LOCAL_ENDPOINT}' AS hms (TYPE metastore);
 
 statement error
 SELECT * FROM metastore_scan('hms', 'default', 'missing_table');

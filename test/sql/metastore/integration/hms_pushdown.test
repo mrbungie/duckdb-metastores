@@ -4,9 +4,12 @@
 
 require metastore
 
+test-env HMS_LOCAL_ENDPOINT 127.0.0.1:9083
+
+
 # Ensure data was seeded
 statement ok
-ATTACH 'thrift://127.0.0.1:9083' AS hms (TYPE metastore);
+ATTACH 'thrift://${HMS_LOCAL_ENDPOINT}' AS hms (TYPE metastore);
 
 # Test basic pushdown
 query II

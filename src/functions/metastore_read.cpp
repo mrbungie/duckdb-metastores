@@ -18,6 +18,7 @@
 #include "duckdb/main/extension_helper.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/parser/expression/comparison_expression.hpp"
+#include <filesystem>
 
 namespace duckdb {
 
@@ -32,6 +33,7 @@ struct MetastoreReadBindData : public TableFunctionData {
 
 	// Partitioning and filters
 	std::vector<MetastorePartitionPredicate> partition_predicates;
+	std::vector<std::string> selected_partitions;
 	std::vector<std::string> scan_files;
 	bool is_partitioned;
 
@@ -56,6 +58,7 @@ struct MetastoreReadBindData : public TableFunctionData {
 		copy->table = table;
 		// Connector can't be copied easily, so we leave it null in the copy and re-init if needed.
 		copy->partition_predicates = partition_predicates;
+		copy->selected_partitions = selected_partitions;
 		copy->scan_files = scan_files;
 		copy->is_partitioned = is_partitioned;
 		if (underlying_bind_data) {
@@ -119,11 +122,72 @@ static string BuildScanPath(const string &raw_location, MetastoreFormat format) 
 	return location;
 }
 
-static void AddNamedConstant(vector<unique_ptr<ParsedExpression>> &arguments, const string &name, Value value) {
-	auto named_arg = make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL,
-	                                                 make_uniq<ColumnRefExpression>(name),
-	                                                 make_uniq<ConstantExpression>(std::move(value)));
-	arguments.push_back(std::move(named_arg));
+static std::vector<std::string> ResolveScanFiles(const std::vector<std::string> &scan_files) {
+	std::vector<std::string> resolved;
+	for (auto &scan_file : scan_files) {
+		auto normalized = scan_file;
+		if (StringUtil::Contains(normalized, "[!._]*")) {
+			auto marker = normalized.find("[!._]*");
+			auto base = normalized.substr(0, marker);
+			std::error_code ec;
+			for (auto &entry : std::filesystem::directory_iterator(base, ec)) {
+				if (ec || !entry.is_regular_file()) {
+					continue;
+				}
+				auto file_name = entry.path().filename().string();
+				if (!file_name.empty() && file_name[0] != '.' && file_name[0] != '_') {
+					resolved.push_back(entry.path().string());
+				}
+			}
+			if (!ec) {
+				continue;
+			}
+		}
+		resolved.push_back(scan_file);
+	}
+	std::sort(resolved.begin(), resolved.end());
+	resolved.erase(std::unique(resolved.begin(), resolved.end()), resolved.end());
+	return resolved;
+}
+
+static std::string JoinPreview(const std::vector<std::string> &values, idx_t limit = 8) {
+	if (values.empty()) {
+		return "";
+	}
+	std::string result;
+	for (idx_t i = 0; i < values.size() && i < limit; i++) {
+		if (!result.empty()) {
+			result += ", ";
+		}
+		result += values[i];
+	}
+	if (values.size() > limit) {
+		result += ", ...";
+	}
+	return result;
+}
+
+static std::vector<std::string> PartitionNames(const MetastoreTable &table, const std::vector<MetastorePartitionValue> &partitions) {
+	std::vector<std::string> names;
+	for (auto &part : partitions) {
+		std::string name;
+		for (idx_t i = 0; i < part.values.size() && i < table.partition_spec.columns.size(); i++) {
+			if (!name.empty()) {
+				name += "/";
+			}
+			name += table.partition_spec.columns[i].name + "=" + part.values[i];
+		}
+		if (!name.empty()) {
+			names.push_back(std::move(name));
+		}
+	}
+	std::sort(names.begin(), names.end());
+	names.erase(std::unique(names.begin(), names.end()), names.end());
+	return names;
+}
+
+static void AddNamedParameter(named_parameter_map_t &named_parameters, const string &name, Value value) {
+	named_parameters[name] = std::move(value);
 }
 
 static void BindUnderlyingFunction(ClientContext &context, MetastoreReadBindData &bind_data) {
@@ -134,7 +198,7 @@ static void BindUnderlyingFunction(ClientContext &context, MetastoreReadBindData
 		scan_function_name = "read_json_auto";
 		break;
 	case MetastoreFormat::CSV:
-		scan_function_name = "read_csv_auto";
+		scan_function_name = "read_csv";
 		break;
 	case MetastoreFormat::Parquet:
 		Catalog::TryAutoLoad(context, "parquet");
@@ -159,8 +223,7 @@ static void BindUnderlyingFunction(ClientContext &context, MetastoreReadBindData
 		}
 	}
 
-	vector<unique_ptr<ParsedExpression>> arguments;
-	arguments.push_back(make_uniq<ConstantExpression>(Value::LIST(LogicalType::VARCHAR, file_list)));
+	named_parameter_map_t named_parameters;
 
 	if (bind_data.table.storage_descriptor.format == MetastoreFormat::JSON) {
 		if (!bind_data.table.storage_descriptor.columns.empty()) {
@@ -173,43 +236,48 @@ static void BindUnderlyingFunction(ClientContext &context, MetastoreReadBindData
 					column_types.emplace_back(col.name, Value(MapHiveTypeToDuckDB(col.type)));
 				}
 			}
-			AddNamedConstant(arguments, "columns", Value::STRUCT(std::move(column_types)));
+			AddNamedParameter(named_parameters, "columns", Value::STRUCT(std::move(column_types)));
 		}
 	}
 	if (bind_data.table.storage_descriptor.format == MetastoreFormat::CSV) {
-		AddNamedConstant(arguments, "header", Value::BOOLEAN(false));
+		AddNamedParameter(named_parameters, "header", Value::BOOLEAN(false));
 		auto serde_it = bind_data.table.storage_descriptor.serde_parameters.find("field.delim");
 		if (serde_it == bind_data.table.storage_descriptor.serde_parameters.end()) {
 			serde_it = bind_data.table.storage_descriptor.serde_parameters.find("serialization.format");
 		}
 		if (serde_it != bind_data.table.storage_descriptor.serde_parameters.end() && !serde_it->second.empty()) {
-			AddNamedConstant(arguments, "delim", Value(serde_it->second));
+			AddNamedParameter(named_parameters, "delim", Value(serde_it->second));
 		}
 		if (!bind_data.table.storage_descriptor.columns.empty()) {
 			child_list_t<Value> column_types;
 			for (auto &column : bind_data.table.storage_descriptor.columns) {
 				column_types.emplace_back(column.name, Value(MapHiveTypeToDuckDB(column.type)));
 			}
-			if (bind_data.is_partitioned) {
-				for (auto &col : bind_data.table.partition_spec.columns) {
-					column_types.emplace_back(col.name, Value(MapHiveTypeToDuckDB(col.type)));
-				}
-			}
-			AddNamedConstant(arguments, "columns", Value::STRUCT(std::move(column_types)));
+			AddNamedParameter(named_parameters, "columns", Value::STRUCT(std::move(column_types)));
 		}
 	}
 	if (bind_data.is_partitioned) {
-		AddNamedConstant(arguments, "hive_partitioning", Value::BOOLEAN(true));
+		AddNamedParameter(named_parameters, "hive_partitioning", Value::BOOLEAN(true));
 	}
 
-	named_parameter_map_t named_parameters;
 	vector<LogicalType> input_table_types;
 	vector<string> input_table_names;
+	vector<Value> bind_inputs;
+	bind_inputs.push_back(Value::LIST(LogicalType::VARCHAR, file_list));
 	auto table_func_ref = make_uniq<TableFunctionRef>();
-	TableFunctionBindInput bind_input(file_list, named_parameters, input_table_types, input_table_names, nullptr, nullptr, bind_data.underlying_function, *table_func_ref);
+	TableFunctionBindInput bind_input(bind_inputs, named_parameters, input_table_types, input_table_names, nullptr, nullptr,
+	                                 bind_data.underlying_function, *table_func_ref);
 	
 	try {
 		bind_data.underlying_bind_data = bind_data.underlying_function.bind(context, bind_input, bind_data.return_types, bind_data.names);
+		if (bind_data.is_partitioned && !bind_data.table.storage_descriptor.columns.empty()) {
+			auto data_col_count = bind_data.table.storage_descriptor.columns.size();
+			if (bind_data.names.size() >= data_col_count) {
+				for (idx_t i = 0; i < data_col_count; i++) {
+					bind_data.names[i] = bind_data.table.storage_descriptor.columns[i].name;
+				}
+			}
+		}
 	} catch (std::exception &e) {
 		if (bind_data.scan_files.empty() && bind_data.is_partitioned) {
 			for (auto &col : bind_data.table.storage_descriptor.columns) {
@@ -261,6 +329,7 @@ unique_ptr<FunctionData> MetastoreReadBind(ClientContext &context, TableFunction
 		// If pushdown doesn't prune, we will list all. Wait, if we list them now, duckdb types might infer correctly.
 		auto parts_result = bind_data->connector->ListPartitions(schema, table_name, "");
 		if (parts_result.IsOk()) {
+			bind_data->selected_partitions = PartitionNames(bind_data->table, parts_result.value);
 			for (auto &part : parts_result.value) {
 				auto scan_path = BuildScanPath(part.location, bind_data->table.storage_descriptor.format);
 				if (!scan_path.empty()) {
@@ -302,6 +371,7 @@ void MetastoreReadPushdownComplexFilter(ClientContext &context, LogicalGet &get,
 
 	auto parts_result = bind_data.connector->ListPartitions(bind_data.schema, bind_data.table_name, hms_predicate);
 	if (parts_result.IsOk()) {
+		bind_data.selected_partitions = PartitionNames(bind_data.table, parts_result.value);
 		bind_data.scan_files.clear();
 		for (auto &part : parts_result.value) {
 			auto scan_path = BuildScanPath(part.location, bind_data.table.storage_descriptor.format);
@@ -375,6 +445,17 @@ InsertionOrderPreservingMap<string> MetastoreReadToString(TableFunctionToStringI
 	result["Metastore"] = bind_data.catalog;
 	result["Table"] = bind_data.table_name;
 	result["Underlying Scan"] = bind_data.underlying_function.name;
+	if (bind_data.is_partitioned) {
+		result["Partitions Selected"] = std::to_string(bind_data.selected_partitions.size());
+		if (!bind_data.selected_partitions.empty()) {
+			result["Partition Values"] = JoinPreview(bind_data.selected_partitions);
+		}
+	}
+	result["Resolved Files"] = std::to_string(ResolveScanFiles(bind_data.scan_files).size());
+	auto resolved = ResolveScanFiles(bind_data.scan_files);
+	if (!resolved.empty()) {
+		result["File Paths"] = JoinPreview(resolved);
+	}
 	return result;
 }
 

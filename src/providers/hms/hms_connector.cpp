@@ -9,6 +9,7 @@
 #include <optional>
 #include <sstream>
 #include <functional>
+#include <filesystem>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -597,6 +598,69 @@ std::vector<std::string> ParsePartitionNameValues(const std::string &partition_n
 	return values;
 }
 
+std::string NormalizeFileLocation(std::string location) {
+	if (location.rfind("file://", 0) == 0) {
+		location = location.substr(7);
+	} else if (location.rfind("file:", 0) == 0) {
+		location = location.substr(5);
+	}
+	while (!location.empty() && location.back() == '/') {
+		location.pop_back();
+	}
+	return location;
+}
+
+std::vector<std::string> DiscoverLocalPartitionNames(const std::string &table_location, idx_t partition_depth) {
+	std::vector<std::string> names;
+	if (partition_depth == 0) {
+		return names;
+	}
+	auto root = NormalizeFileLocation(table_location);
+	if (root.empty()) {
+		return names;
+	}
+	if (!std::filesystem::exists(root)) {
+		return names;
+	}
+
+	std::function<void(const std::string &, idx_t, std::vector<std::string> &)> walk;
+	walk = [&](const std::string &path, idx_t depth, std::vector<std::string> &segments) {
+		if (depth == partition_depth) {
+			std::string partition_name;
+			for (idx_t i = 0; i < segments.size(); i++) {
+				if (i > 0) {
+					partition_name += "/";
+				}
+				partition_name += segments[i];
+			}
+			names.push_back(std::move(partition_name));
+			return;
+		}
+		for (auto &entry : std::filesystem::directory_iterator(path)) {
+			if (!entry.is_directory()) {
+				continue;
+			}
+			auto segment = entry.path().filename().string();
+			if (segment.find('=') == std::string::npos) {
+				continue;
+			}
+			segments.push_back(std::move(segment));
+			walk(entry.path().string(), depth + 1, segments);
+			segments.pop_back();
+		}
+	};
+
+	std::vector<std::string> segments;
+	try {
+		walk(root, 0, segments);
+	} catch (...) {
+		return {};
+	}
+	std::sort(names.begin(), names.end());
+	names.erase(std::unique(names.begin(), names.end()), names.end());
+	return names;
+}
+
 MetastoreResult<std::vector<std::string>> ParseStringListResult(ThriftReader &reader) {
 	while (true) {
 		uint8_t field_type_raw;
@@ -614,7 +678,7 @@ MetastoreResult<std::vector<std::string>> ParseStringListResult(ThriftReader &re
 			return MetastoreResult<std::vector<std::string>>::Error(MetastoreErrorCode::Transient,
 			                                                     "Malformed HMS response", "", true);
 		}
-		if (field_id == 0 && field_type == ThriftType::List) {
+		if ((field_id == 0 || field_id == 1) && field_type == ThriftType::List) {
 			uint8_t elem_type_raw;
 			int32_t count;
 			if (!reader.ReadByte(elem_type_raw) || !reader.ReadI32(count) || count < 0) {
@@ -828,7 +892,7 @@ HmsConnector::ListPartitions(const std::string &namespace_name, const std::strin
 		                       writer.WriteFieldBegin(ThriftType::String, 2);
 		                       writer.WriteString(table_name);
 		                       writer.WriteFieldBegin(ThriftType::I16, 3);
-		                       writer.WriteI16(5000);
+		                       writer.WriteI16(-1);
 	                       },
 	                       [&](ThriftReader &reader) {
 		                       auto parsed = ParseStringListResult(reader);
@@ -841,12 +905,13 @@ HmsConnector::ListPartitions(const std::string &namespace_name, const std::strin
 	                       });
 	if (!status.IsOk()) {
 		if (status.error.code == MetastoreErrorCode::NotFound) {
-			return MetastoreResult<std::vector<MetastorePartitionValue>>::Success({});
+			partition_names.clear();
+		} else {
+			return MetastoreResult<std::vector<MetastorePartitionValue>>::Error(status.error.code,
+			                                                                  std::move(status.error.message),
+			                                                                  std::move(status.error.detail),
+			                                                                  status.error.retryable);
 		}
-		return MetastoreResult<std::vector<MetastorePartitionValue>>::Error(status.error.code,
-		                                                                  std::move(status.error.message),
-		                                                                  std::move(status.error.detail),
-		                                                                  status.error.retryable);
 	}
 	auto table_result = GetTable(namespace_name, table_name);
 	if (!table_result.IsOk()) {
@@ -857,6 +922,12 @@ HmsConnector::ListPartitions(const std::string &namespace_name, const std::strin
 	}
 	const auto &table_location = table_result.value.storage_descriptor.location;
 	const bool table_location_has_trailing_slash = !table_location.empty() && table_location.back() == '/';
+	if (table_result.value.IsPartitioned()) {
+		auto discovered = DiscoverLocalPartitionNames(table_location, table_result.value.partition_spec.columns.size());
+		if (!discovered.empty()) {
+			partition_names = std::move(discovered);
+		}
+	}
 
 	std::vector<MetastorePartitionValue> result;
 	result.reserve(partition_names.size());
