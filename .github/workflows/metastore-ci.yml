@@ -48,6 +48,7 @@ jobs:
       - name: Start HMS instance
         run: |
           mkdir -p "${HMS_SHARED_DIR}"
+          chmod -R 0777 "${HMS_SHARED_DIR}"
           docker compose -f test/integration/hms/docker-compose.yml up -d
           for i in $(seq 1 60); do
             if nc -z 127.0.0.1 9083; then
@@ -140,6 +141,7 @@ jobs:
         if: steps.check_flag.outputs.enabled == 'true'
         run: |
           mkdir -p "${HMS_SHARED_DIR}"
+          chmod -R 0777 "${HMS_SHARED_DIR}"
           docker compose -f test/integration/hms/docker-compose.yml up -d
           for i in $(seq 1 60); do
             if nc -z 127.0.0.1 9083; then
