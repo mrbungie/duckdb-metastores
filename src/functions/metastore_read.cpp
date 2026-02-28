@@ -8,6 +8,8 @@
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/optimizer/filter_combiner.hpp"
+#include "duckdb/planner/operator/logical_get.hpp"
+#include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
@@ -138,8 +140,8 @@ static void BindUnderlyingFunction(ClientContext &context, MetastoreReadBindData
 	}
 
 	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto &func_catalog = catalog.GetEntry(context, CatalogType::TABLE_FUNCTION_ENTRY, SYSTEM_CATALOG,
-	                                      DEFAULT_SCHEMA, scan_function_name)->Cast<TableFunctionCatalogEntry>();
+	auto &func_catalog = Catalog::GetEntry(context, CatalogType::TABLE_FUNCTION_ENTRY, SYSTEM_CATALOG,
+	                                      DEFAULT_SCHEMA, scan_function_name).Cast<TableFunctionCatalogEntry>();
 	bind_data.underlying_function = func_catalog.functions.GetFunctionByArguments(context, {LogicalType::LIST(LogicalType::VARCHAR)});
 
 	vector<Value> file_list;
@@ -181,7 +183,11 @@ static void BindUnderlyingFunction(ClientContext &context, MetastoreReadBindData
 		AddNamedConstant(arguments, "hive_partitioning", Value::BOOLEAN(true));
 	}
 
-	TableFunctionBindInput bind_input(arguments, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+	named_parameter_map_t named_parameters;
+	vector<LogicalType> input_table_types;
+	vector<string> input_table_names;
+	auto table_func_ref = make_uniq<TableFunctionRef>();
+	TableFunctionBindInput bind_input(file_list, named_parameters, input_table_types, input_table_names, nullptr, nullptr, bind_data.underlying_function, *table_func_ref);
 	
 	try {
 		bind_data.underlying_bind_data = bind_data.underlying_function.bind(context, bind_input, bind_data.return_types, bind_data.names);
@@ -265,8 +271,8 @@ void MetastoreReadPushdownComplexFilter(ClientContext &context, LogicalGet &get,
 		combiner.AddFilter(filter->Copy());
 	}
 	vector<FilterPushdownResult> pushdown_results;
-	TableFilterSet filter_set = combiner.GenerateTableScanFilters(get.column_ids, pushdown_results);
-	std::string hms_predicate = MetastorePlanner::GeneratePartitionPredicate(bind_data.table, filter_set, get.column_ids, bind_data.names);
+	TableFilterSet filter_set = combiner.GenerateTableScanFilters(get.GetColumnIds(), pushdown_results);
+	std::string hms_predicate = MetastorePlanner::GeneratePartitionPredicate(bind_data.table, filter_set, get.GetColumnIds(), bind_data.names);
 
 	auto parts_result = bind_data.connector->ListPartitions(bind_data.schema, bind_data.table_name, hms_predicate);
 	if (parts_result.IsOk()) {
@@ -276,7 +282,7 @@ void MetastoreReadPushdownComplexFilter(ClientContext &context, LogicalGet &get,
 		}
 	}
 
-	BindUnderlyingFunction(context, bind_data);\n\n\t// Clear filters that were fully handled by HMS if needed, but for now we let DuckDB re-filter
+	BindUnderlyingFunction(context, bind_data);
 }
 
 

@@ -37,7 +37,7 @@ bool MetastorePlanner::CanPrunePartitions(const MetastoreTable &table) {
 	return table.partition_spec.IsPartitioned() && table.IsPartitioned();
 }
 
-std::string MetastorePlanner::GeneratePartitionPredicate(const MetastoreTable &table, const TableFilterSet &filter_set, const std::vector<column_t> &column_ids, const std::vector<std::string> &names) {
+std::string MetastorePlanner::GeneratePartitionPredicate(const MetastoreTable &table, const TableFilterSet &filter_set, const vector<ColumnIndex> &column_ids, const std::vector<std::string> &names) {
 	if (!CanPrunePartitions(table)) {
 		return "";
 	}
@@ -50,7 +50,7 @@ std::string MetastorePlanner::GeneratePartitionPredicate(const MetastoreTable &t
 		auto &filter = *entry.second;
 		
 		if (filter_idx >= column_ids.size()) continue;
-		idx_t column_id = column_ids[filter_idx];
+		idx_t column_id = column_ids[filter_idx].GetPrimaryIndex();
 		
 		if (column_id >= names.size()) continue;
 		std::string col_name = names[column_id];

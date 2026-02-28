@@ -1,6 +1,7 @@
 #pragma once
 
 #include "metastore_types.hpp"
+#include "duckdb/common/column_index.hpp"
 #include "duckdb/planner/table_filter.hpp"
 
 #include <optional>
@@ -33,7 +34,7 @@ public:
 
 	static bool CanPrunePartitions(const MetastoreTable &table);
 
-	static std::string GeneratePartitionPredicate(const MetastoreTable &table, const TableFilterSet &filter_set, const std::vector<column_t> &column_ids, const std::vector<std::string> &names);
+	static std::string GeneratePartitionPredicate(const MetastoreTable &table, const TableFilterSet &filter_set, const vector<ColumnIndex> &column_ids, const std::vector<std::string> &names);
 };
 
 }
