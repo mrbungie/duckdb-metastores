@@ -123,6 +123,7 @@ if [[ "${HMS_TABLE_FORMAT}" != "csv" ]]; then
 	exit 1
 fi
 
+make generate_tests
 sql_payload="CREATE DATABASE IF NOT EXISTS ${HMS_DB_NAME};\nUSE ${HMS_DB_NAME};\n"
 for i in $(seq 1 "${HMS_TABLE_COUNT}"); do
 	tbl="fixture_tbl_${i}"
@@ -137,40 +138,11 @@ done
 docker compose -f "${COMPOSE_FILE}" exec -T hms-hiveserver2 bash -lc "printf '%b' \"${sql_payload}\" > ${BOOTSTRAP_SQL}"
 docker compose -f "${COMPOSE_FILE}" exec -T hms-hiveserver2 bash -lc "/opt/hive/bin/beeline -u 'jdbc:hive2://127.0.0.1:10000/default' -n hive -f ${BOOTSTRAP_SQL}"
 
-count_expr=""
-format_union=""
-for i in $(seq 1 "${HMS_TABLE_COUNT}"); do
-	tbl="fixture_tbl_${i}"
-	count_term="(SELECT COUNT(*) FROM metastore_scan('hms', '${HMS_DB_NAME}', '${tbl}'))"
-	if [[ -z "${count_expr}" ]]; then
-		count_expr="${count_term}"
-	else
-		count_expr+=" + ${count_term}"
-	fi
-	format_query="SELECT * FROM metastore_scan('hms', '${HMS_DB_NAME}', '${tbl}') WHERE lower(format) = '${HMS_TABLE_FORMAT}'"
-	if [[ -z "${format_union}" ]]; then
-		format_union="${format_query}"
-	else
-		format_union+=" UNION ALL ${format_query}"
-	fi
-done
+if ! [[ -f "${HMS_DUCKDB_TEST}" ]]; then
+  echo "Test file was not generated!" >&2
+  exit 1
+fi
 
-test_payload="# name: hms_duckdb_smoke_generated\n"
-test_payload+="# description: generated HMS + DuckDB integration checks\n"
-test_payload+="# group: [sql]\n\n"
-test_payload+="require metastore\n\n"
-test_payload+="statement ok\nCREATE TEMP TABLE duckdb_smoke(i INTEGER);\n\n"
-test_payload+="statement ok\nINSERT INTO duckdb_smoke VALUES (7), (11);\n\n"
-test_payload+="query I\nSELECT SUM(i) FROM duckdb_smoke;\n----\n18\n\n"
-test_payload+="statement ok\nATTACH 'thrift://127.0.0.1:9083' AS hms (TYPE metastore);\n\n"
-test_payload+="query I\nSELECT ${count_expr};\n----\n${HMS_TABLE_COUNT}\n\n"
-test_payload+="query I\nSELECT COUNT(*) FROM (${format_union}) t;\n----\n${HMS_TABLE_COUNT}\n\n"
-test_payload+="query I\nSELECT COUNT(*) FROM hms.${HMS_DB_NAME}.fixture_tbl_1;\n----\n1\n\n"
-test_payload+="query I\nSELECT SUM(id) FROM hms.${HMS_DB_NAME}.fixture_tbl_1;\n----\n1\n\n"
-test_payload+="query T\nSELECT value FROM hms.${HMS_DB_NAME}.fixture_tbl_1 WHERE id = 1;\n----\nv1\n\n"
-test_payload+="statement error\nINSERT INTO hms.${HMS_DB_NAME}.fixture_tbl_1 VALUES (100, 'duckdb_write');\n----\n"
-
-printf '%b' "${test_payload}" > "${HMS_DUCKDB_TEST}"
 
 if [[ ! -x "${TEST_RUNNER}" ]]; then
 	echo "DuckDB test runner not found at ${TEST_RUNNER}. Run 'make' before integration tests." >&2
