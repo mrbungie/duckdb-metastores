@@ -43,11 +43,23 @@ jobs:
         with:
           vcpkgGitCommitId: ce613c41372b23b1f51333815feb3edd87ef8a8b
 
+      - name: Start Mock HMS Docker Compose for local tests
+        run: |
+          docker compose -f test/integration/hms/docker-compose.yml up -d
+          sleep 10
+
       - name: Build extension
         run: make
 
+      - name: Generate HMS Integration tests
+        run: make generate_tests
+
       - name: Run SQLLogic tests (generic metastore contracts)
         run: make test
+
+      - name: Stop Mock HMS Docker Compose
+        if: always()
+        run: docker compose -f test/integration/hms/docker-compose.yml down
 
   integration-tests:
     name: Integration Tests (credential-gated)
@@ -88,6 +100,11 @@ jobs:
         uses: lukka/run-vcpkg@v11.1
         with:
           vcpkgGitCommitId: ce613c41372b23b1f51333815feb3edd87ef8a8b
+
+      - name: Start Mock HMS Docker Compose for local tests
+        run: |
+          docker compose -f test/integration/hms/docker-compose.yml up -d
+          sleep 10
 
       - name: Build extension
         if: steps.check_flag.outputs.enabled == 'true'
