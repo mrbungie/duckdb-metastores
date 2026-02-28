@@ -22,3 +22,6 @@ statement error
 SELECT * FROM metastore_scan('hms', 'default', 'missing_table');
 ----
 HMS table not found
+
+# The actual partition pruning tests will be run by the generated script
+# but we can verify EXPLAIN string parsing works if we implement to_string

@@ -9,6 +9,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/optimizer/filter_combiner.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
+#include "duckdb/common/insertion_order_preserving_map.hpp"
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
@@ -354,12 +355,22 @@ void MetastoreReadExecute(ClientContext &context, TableFunctionInput &data, Data
 	bind_data.underlying_function.function(context, underlying_input, output);
 }
 
+InsertionOrderPreservingMap<string> MetastoreReadToString(TableFunctionToStringInput &input) {
+	InsertionOrderPreservingMap<string> result;
+	auto &bind_data = input.bind_data->Cast<MetastoreReadBindData>();
+	result["Metastore"] = bind_data.catalog;
+	result["Table"] = bind_data.table_name;
+	result["Underlying Scan"] = bind_data.underlying_function.name;
+	return result;
+}
+
 TableFunction GetMetastoreReadFunction() {
 	TableFunction func("metastore_read", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                   MetastoreReadExecute, MetastoreReadBind, MetastoreReadInitGlobal, MetastoreReadInitLocal);
 	func.filter_pushdown = true;
 	func.pushdown_complex_filter = MetastoreReadPushdownComplexFilter;
 	func.projection_pushdown = true;
+	func.to_string = MetastoreReadToString;
 	return func;
 }
 
