@@ -109,7 +109,7 @@ static string BuildScanPath(const string &raw_location, MetastoreFormat format) 
 	if (StringUtil::Contains(location, "*") || StringUtil::Contains(location, "?")) {
 		return location;
 	}
-	if (format == MetastoreFormat::CSV || format == MetastoreFormat::Parquet) {
+	if (format == MetastoreFormat::CSV || format == MetastoreFormat::Parquet || format == MetastoreFormat::JSON) {
 		if (!StringUtil::EndsWith(location, "/")) {
 			return location + "/[!._]*";
 		}
@@ -128,6 +128,10 @@ static void AddNamedConstant(vector<unique_ptr<ParsedExpression>> &arguments, co
 static void BindUnderlyingFunction(ClientContext &context, MetastoreReadBindData &bind_data) {
 	string scan_function_name;
 	switch (bind_data.table.storage_descriptor.format) {
+	case MetastoreFormat::JSON:
+		Catalog::TryAutoLoad(context, "json");
+		scan_function_name = "read_json_auto";
+		break;
 	case MetastoreFormat::CSV:
 		scan_function_name = "read_csv_auto";
 		break;
@@ -157,6 +161,20 @@ static void BindUnderlyingFunction(ClientContext &context, MetastoreReadBindData
 	vector<unique_ptr<ParsedExpression>> arguments;
 	arguments.push_back(make_uniq<ConstantExpression>(Value::LIST(LogicalType::VARCHAR, file_list)));
 
+	if (bind_data.table.storage_descriptor.format == MetastoreFormat::JSON) {
+		if (!bind_data.table.storage_descriptor.columns.empty()) {
+			child_list_t<Value> column_types;
+			for (auto &column : bind_data.table.storage_descriptor.columns) {
+				column_types.emplace_back(column.name, Value(MapHiveTypeToDuckDB(column.type)));
+			}
+			if (bind_data.is_partitioned) {
+				for (auto &col : bind_data.table.partition_spec.columns) {
+					column_types.emplace_back(col.name, Value(MapHiveTypeToDuckDB(col.type)));
+				}
+			}
+			AddNamedConstant(arguments, "columns", Value::STRUCT(std::move(column_types)));
+		}
+	}
 	if (bind_data.table.storage_descriptor.format == MetastoreFormat::CSV) {
 		AddNamedConstant(arguments, "header", Value::BOOLEAN(false));
 		auto serde_it = bind_data.table.storage_descriptor.serde_parameters.find("field.delim");
@@ -177,7 +195,6 @@ static void BindUnderlyingFunction(ClientContext &context, MetastoreReadBindData
 				}
 			}
 			AddNamedConstant(arguments, "columns", Value::STRUCT(std::move(column_types)));
-			AddNamedConstant(arguments, "auto_detect", Value::BOOLEAN(false));
 		}
 	} else if (bind_data.table.storage_descriptor.format == MetastoreFormat::Parquet && bind_data.is_partitioned) {
 		AddNamedConstant(arguments, "hive_partitioning", Value::BOOLEAN(true));

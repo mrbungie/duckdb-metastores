@@ -32,6 +32,9 @@ MetastoreFormat DetectFromPattern(const std::optional<std::string> &field) {
 	if (ContainsAny(lower, {"mapredparquetinputformat", "parquet"})) {
 		return MetastoreFormat::Parquet;
 	}
+	if (ContainsAny(lower, {"jsoninputformat", "json"})) {
+		return MetastoreFormat::JSON;
+	}
 	if (ContainsAny(lower, {"orcinputformat", "orc"})) {
 		return MetastoreFormat::ORC;
 	}
@@ -48,6 +51,9 @@ MetastoreFormat DetectFromSerde(const std::optional<std::string> &field) {
 	auto lower = ToLower(*field);
 	if (ContainsAny(lower, {"parquethiveserde", "parquet"})) {
 		return MetastoreFormat::Parquet;
+	}
+	if (ContainsAny(lower, {"jsonserde", "json"})) {
+		return MetastoreFormat::JSON;
 	}
 	if (ContainsAny(lower, {"orcserde", "orc"})) {
 		return MetastoreFormat::ORC;

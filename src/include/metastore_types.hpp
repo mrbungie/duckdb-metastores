@@ -11,6 +11,7 @@ namespace duckdb {
 
 enum class MetastoreFormat : uint8_t {
 	Parquet,
+	JSON,
 	ORC,
 	CSV,
 	Delta,
@@ -24,6 +25,8 @@ inline const char *MetastoreFormatToString(MetastoreFormat fmt) {
 		return "Parquet";
 	case MetastoreFormat::ORC:
 		return "ORC";
+	case MetastoreFormat::JSON:
+		return "JSON";
 	case MetastoreFormat::CSV:
 		return "CSV";
 	case MetastoreFormat::Delta:
