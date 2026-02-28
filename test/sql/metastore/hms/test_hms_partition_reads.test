@@ -1,0 +1,13 @@
+# name: test/sql/metastore/hms/test_hms_partition_reads.test
+# description: Test HMS partition reading and pruning (mocked or dependent on test infra)
+# group: [metastore]
+
+require metastore
+
+# In absence of a real HMS, we just check that the syntax works and error messages propagate correctly
+
+statement error
+ATTACH 'thrift://localhost:9083' AS my_hms (TYPE metastore, PROVIDER 'hms');
+SELECT * FROM my_hms.default.my_partitioned_table WHERE year = '2023';
+----
+Failed to resolve HMS table

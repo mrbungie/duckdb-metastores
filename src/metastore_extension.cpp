@@ -132,6 +132,17 @@ static unique_ptr<TableRef> MetastoreReplacementScan(ClientContext &context, Rep
 		return nullptr;
 	}
 	string scan_function;
+	if (table_result.value.IsPartitioned()) {
+		auto table_function = make_uniq<TableFunctionRef>();
+		vector<unique_ptr<ParsedExpression>> arguments;
+		arguments.push_back(make_uniq<ConstantExpression>(Value(input.catalog_name)));
+		arguments.push_back(make_uniq<ConstantExpression>(Value(input.schema_name)));
+		arguments.push_back(make_uniq<ConstantExpression>(Value(input.table_name)));
+		table_function->function = make_uniq<FunctionExpression>("metastore_read", std::move(arguments));
+		table_function->alias = input.table_name;
+		return std::move(table_function);
+	}
+
 	switch (table_result.value.storage_descriptor.format) {
 	case MetastoreFormat::CSV:
 		scan_function = "read_csv_auto";

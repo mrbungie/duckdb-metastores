@@ -117,6 +117,7 @@ static void MetastoreScanExecute(
 void RegisterMetastoreFunctions(ExtensionLoader &loader) {
 	// Register metastore_scan table function
 	// Signature: metastore_scan(catalog VARCHAR, schema VARCHAR, table_name VARCHAR)
+	loader.RegisterFunction(GetMetastoreReadFunction());
 	loader.RegisterFunction(TableFunction(
 			"metastore_scan",
 			{LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},

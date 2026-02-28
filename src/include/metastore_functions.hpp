@@ -7,4 +7,6 @@ namespace duckdb {
 // Register metastore table functions
 void RegisterMetastoreFunctions(ExtensionLoader &loader);
 
+TableFunction GetMetastoreReadFunction();
+
 } // namespace duckdb
