@@ -87,7 +87,7 @@ jobs:
         run: make
 
       - name: Run SQLLogic tests (generic metastore contracts)
-        run: make test LINUX_CI_IN_DOCKER=1
+        run: make test
         env:
           HMS_LOCAL_ENDPOINT: 127.0.0.1:9083
 
@@ -183,7 +183,7 @@ jobs:
 
       - name: Run integration tests
         if: steps.check_flag.outputs.enabled == 'true'
-        run: make test LINUX_CI_IN_DOCKER=1
+        run: make test
         env:
           HMS_LOCAL_ENDPOINT: 127.0.0.1:9083
           # Glue credentials
