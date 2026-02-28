@@ -1,0 +1,13 @@
+# name: test/sql/metastore/generic/test_metastore_read_json.test
+# description: Test JSON format reading errors natively
+# group: [metastore]
+
+require metastore
+
+# We mock out the behavior of reading JSON by asserting errors rather than executing full mock HMS, since it's hard locally without Docker.
+# We just want to check the underlying bind routes properly.
+
+statement error
+SELECT * FROM metastore_read('missing_cat', 'db', 'json_table')
+----
+Metastore catalog missing_cat not found or unsupported
