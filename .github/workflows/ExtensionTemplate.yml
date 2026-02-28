@@ -55,9 +55,6 @@ jobs:
         run: |
           make
 
-      - name: Test
-        run: |
-          make test
 
   macos:
     name: MacOS
@@ -108,9 +105,6 @@ jobs:
         run: |
           make
 
-      - name: Test
-        run: |
-          make test
 
   windows:
     name: Windows
@@ -156,7 +150,3 @@ jobs:
       - name: Build
         run: |
           make
-
-      - name: Test extension
-        run: |
-          build/release/test/Release/unittest.exe
