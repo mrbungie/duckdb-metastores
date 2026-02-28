@@ -4,10 +4,20 @@
 
 require metastore
 
-# In absence of a real HMS, we just check that the syntax works and error messages propagate correctly
-
 statement error
 ATTACH 'thrift://localhost:9083' AS my_hms (TYPE metastore, PROVIDER 'hms');
 SELECT * FROM my_hms.default.my_partitioned_table WHERE year = '2023';
+----
+HMS provider requires ENDPOINT
+
+statement error
+ATTACH 'thrift://localhost:9083' AS my_hms2 (TYPE metastore, PROVIDER 'hms');
+SELECT * FROM my_hms2.default.my_partitioned_table WHERE year > '2020' AND month = '10';
+----
+HMS provider requires ENDPOINT
+
+statement error
+ATTACH 'thrift://localhost:9083' AS my_hms3 (TYPE metastore, PROVIDER 'hms');
+SELECT * FROM my_hms3.default.my_partitioned_table WHERE CAST(year AS INT) > 2020;
 ----
 HMS provider requires ENDPOINT
