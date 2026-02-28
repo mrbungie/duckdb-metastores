@@ -105,6 +105,9 @@ for i in $(seq 1 "${HMS_TABLE_COUNT}"); do
 	rm -rf "${tbl_path}"
 	mkdir -p "${tbl_path}"
 	sql_payload+="DROP TABLE IF EXISTS ${tbl};\n"
+	sql_payload+="CREATE EXTERNAL TABLE ${tbl}_partitioned (id INT, value STRING) PARTITIONED BY (year STRING, month STRING) ROW FORMAT DELIMITED FIELDS TERMINATED BY ',' STORED AS TEXTFILE LOCATION 'file:${tbl_path}_part';\n"
+	sql_payload+="ALTER TABLE ${tbl}_partitioned ADD PARTITION (year='2023', month='10') LOCATION 'file:${tbl_path}_part/year=2023/month=10';\n"
+	sql_payload+="INSERT INTO TABLE ${tbl}_partitioned PARTITION(year='2023', month='10') VALUES (${i}, 'v${i}');\n"
 	sql_payload+="CREATE EXTERNAL TABLE ${tbl} (id INT, value STRING) ROW FORMAT DELIMITED FIELDS TERMINATED BY ',' STORED AS TEXTFILE LOCATION 'file:${tbl_path}';\n"
 	sql_payload+="INSERT INTO TABLE ${tbl} VALUES (${i}, 'v${i}');\n"
 done

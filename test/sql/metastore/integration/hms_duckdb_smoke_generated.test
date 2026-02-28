@@ -19,12 +19,12 @@ statement ok
 ATTACH 'thrift://127.0.0.1:9083' AS hms (TYPE metastore);
 
 query II
-EXPLAIN SELECT * FROM hms.metastore_ci.fixture_tbl_1 WHERE id = 1;
+EXPLAIN SELECT * FROM hms.metastore_ci.fixture_tbl_1_partitioned WHERE year='2023';
 ----
 logical_plan	<REGEX>:.*metastore_read.*
 
 query I
-SELECT (SELECT COUNT(*) FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_1')) + (SELECT COUNT(*) FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_2')) + (SELECT COUNT(*) FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_3')) + (SELECT COUNT(*) FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_4')) + (SELECT COUNT(*) FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_5'));
+SELECT (SELECT COUNT(*) FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_1_partitioned')) + (SELECT COUNT(*) FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_2')) + (SELECT COUNT(*) FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_3')) + (SELECT COUNT(*) FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_4')) + (SELECT COUNT(*) FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_5'));
 ----
 5
 
