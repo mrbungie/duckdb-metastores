@@ -57,7 +57,7 @@ jobs:
         run: make
 
       - name: Run SQLLogic tests (generic metastore contracts)
-        run: make test
+        run: make test LINUX_CI_IN_DOCKER=1
 
       - name: Stop Mock HMS Docker Compose
         if: always()
