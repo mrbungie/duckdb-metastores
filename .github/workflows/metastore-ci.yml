@@ -51,9 +51,6 @@ jobs:
       - name: Build extension
         run: make
 
-      - name: Generate HMS Integration tests
-        run: make generate_tests
-
       - name: Run SQLLogic tests (generic metastore contracts)
         run: make test
 

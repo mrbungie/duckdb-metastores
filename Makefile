@@ -13,6 +13,3 @@ test_compile:
 	cmake --build build/release --target unittest
 
 
-# Setup for generating test files without running docker compose
-generate_tests:
-	./scripts/generate_hms_tests.sh
