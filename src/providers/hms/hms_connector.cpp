@@ -36,7 +36,7 @@ enum class ThriftType : uint8_t {
 
 enum class ThriftMessageType : uint8_t { Call = 1, Reply = 2, Exception = 3 };
 
-static constexpr int32_t THRIFT_VERSION_1 = 0x80010000;
+static constexpr int32_t THRIFT_VERSION_1 = static_cast<int32_t>(0x80010000);
 
 class SocketHandle {
 public:
@@ -727,7 +727,8 @@ MetastoreResult<std::vector<std::string>> ParseStringListResult(ThriftReader &re
 
 template <typename BuildArgs>
 MetastoreResult<int> InvokeRpc(const HmsConfig &config, const std::string &method_name, int32_t seqid,
-                               BuildArgs build_args, std::function<MetastoreResult<int>(ThriftReader &)> parse_result) {
+                               BuildArgs build_args,
+                               const std::function<MetastoreResult<int>(ThriftReader &)> &parse_result) {
 	auto sock_result = ConnectSocket(config.endpoint, config.port);
 	if (!sock_result.IsOk()) {
 		return MetastoreResult<int>::Error(sock_result.error.code, std::move(sock_result.error.message),
@@ -972,7 +973,7 @@ static bool ParsePort(const std::string &port_str, uint16_t &port_out) {
 			return false;
 		}
 	}
-	unsigned long val;
+	uint64_t val;
 	try {
 		val = std::stoul(port_str);
 	} catch (...) {

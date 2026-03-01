@@ -82,28 +82,39 @@ static string TrimTypeSuffix(string hive_type) {
 
 static string MapHiveTypeToDuckDB(const string &hive_type) {
 	auto normalized = TrimTypeSuffix(hive_type);
-	if (normalized == "tinyint")
+	if (normalized == "tinyint") {
 		return "TINYINT";
-	if (normalized == "smallint")
+	}
+	if (normalized == "smallint") {
 		return "SMALLINT";
-	if (normalized == "int" || normalized == "integer")
+	}
+	if (normalized == "int" || normalized == "integer") {
 		return "INTEGER";
-	if (normalized == "bigint")
+	}
+	if (normalized == "bigint") {
 		return "BIGINT";
-	if (normalized == "float")
+	}
+	if (normalized == "float") {
 		return "FLOAT";
-	if (normalized == "double")
+	}
+	if (normalized == "double") {
 		return "DOUBLE";
-	if (normalized == "boolean")
+	}
+	if (normalized == "boolean") {
 		return "BOOLEAN";
-	if (normalized == "date")
+	}
+	if (normalized == "date") {
 		return "DATE";
-	if (normalized == "timestamp")
+	}
+	if (normalized == "timestamp") {
 		return "TIMESTAMP";
-	if (normalized == "string" || normalized == "varchar" || normalized == "char")
+	}
+	if (normalized == "string" || normalized == "varchar" || normalized == "char") {
 		return "VARCHAR";
-	if (normalized == "binary")
+	}
+	if (normalized == "binary") {
 		return "BLOB";
+	}
 	return "VARCHAR";
 }
 
@@ -137,7 +148,7 @@ static string BuildScanPath(const string &raw_location, MetastoreFormat format) 
 static std::vector<std::string> ResolveScanFiles(const std::vector<std::string> &scan_files) {
 	std::vector<std::string> resolved;
 	for (auto &scan_file : scan_files) {
-		auto normalized = scan_file;
+		const auto &normalized = scan_file;
 		if (StringUtil::Contains(normalized, "[!._]*")) {
 			auto marker = normalized.find("[!._]*");
 			auto base = normalized.substr(0, marker);

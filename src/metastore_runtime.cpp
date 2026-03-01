@@ -9,7 +9,9 @@
 
 namespace duckdb {
 
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static std::mutex runtime_mutex;
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static std::unordered_map<std::string, MetastoreConnectorConfig> runtime_configs;
 
 void RegisterMetastoreAttachConfig(const std::string &catalog_name, MetastoreConnectorConfig config) {

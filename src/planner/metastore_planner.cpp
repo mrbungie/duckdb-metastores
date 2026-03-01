@@ -75,8 +75,9 @@ static std::string FilterToPredicate(const std::string &col_name, const TableFil
 		}
 		std::string in_list;
 		for (size_t i = 0; i < in_filter.values.size(); i++) {
-			if (i > 0)
+			if (i > 0) {
 				in_list += ", ";
+			}
 			in_list += "'" + in_filter.values[i].ToString() + "'";
 		}
 		return col_name + " IN (" + in_list + ")";
@@ -86,10 +87,12 @@ static std::string FilterToPredicate(const std::string &col_name, const TableFil
 		std::string result;
 		for (size_t i = 0; i < and_filter.child_filters.size(); i++) {
 			auto child_pred = FilterToPredicate(col_name, *and_filter.child_filters[i]);
-			if (child_pred.empty())
+			if (child_pred.empty()) {
 				return ""; // If any child is unsupported, we can't safely pushdown the AND block
-			if (i > 0)
+			}
+			if (i > 0) {
 				result += " and ";
+			}
 			result += "(" + child_pred + ")";
 		}
 		return result;
@@ -99,10 +102,12 @@ static std::string FilterToPredicate(const std::string &col_name, const TableFil
 		std::string result;
 		for (size_t i = 0; i < or_filter.child_filters.size(); i++) {
 			auto child_pred = FilterToPredicate(col_name, *or_filter.child_filters[i]);
-			if (child_pred.empty())
+			if (child_pred.empty()) {
 				return ""; // If any child is unsupported, the entire OR fails pushdown
-			if (i > 0)
+			}
+			if (i > 0) {
 				result += " or ";
+			}
 			result += "(" + child_pred + ")";
 		}
 		return result;
@@ -131,13 +136,15 @@ std::string MetastorePlanner::GeneratePartitionPredicate(const MetastoreTable &t
 		idx_t filter_idx = entry.first; // This is the index into column_ids
 		auto &filter = *entry.second;
 
-		if (filter_idx >= column_ids.size())
+		if (filter_idx >= column_ids.size()) {
 			continue;
+		}
 		idx_t column_id = column_ids[filter_idx].GetPrimaryIndex();
 
-		if (column_id >= names.size())
+		if (column_id >= names.size()) {
 			continue;
-		std::string col_name = names[column_id];
+		}
+		const std::string &col_name = names[column_id];
 
 		// Check if col_name is a partition column
 		bool is_partition_col = false;
@@ -148,8 +155,9 @@ std::string MetastorePlanner::GeneratePartitionPredicate(const MetastoreTable &t
 			}
 		}
 
-		if (!is_partition_col)
+		if (!is_partition_col) {
 			continue;
+		}
 
 		std::string col_pred = FilterToPredicate(col_name, filter);
 		if (!col_pred.empty()) {
