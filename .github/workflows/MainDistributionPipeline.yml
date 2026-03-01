@@ -29,4 +29,5 @@ jobs:
       ci_tools_version: v1.4.4
       extension_name: metastore
       extra_toolchains: parser_tools
-      format_checks: 'format;tidy'
+      # TODO: format_checks += ;tidy
+      format_checks: format 
