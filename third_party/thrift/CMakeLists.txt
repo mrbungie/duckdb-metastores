@@ -66,6 +66,9 @@ add_custom_command(
 add_library(hms_thrift_lib OBJECT ${THRIFT_GENERATED_FILES})
 target_include_directories(hms_thrift_lib PUBLIC ${THRIFT_OUT_DIR})
 target_link_libraries(hms_thrift_lib PUBLIC thrift::thrift)
+if(WIN32)
+  target_compile_definitions(hms_thrift_lib PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+endif()
 # Warnings: MSVC vs GCC/Clang
 if(MSVC)
   target_compile_options(hms_thrift_lib PRIVATE /wd4100 /wd4127 /wd4244 /wd4267)

@@ -1,5 +1,22 @@
 #include "providers/hms/hms_connector.hpp"
 #include "providers/hms/hms_mapper.hpp"
+#ifdef _WIN32
+#ifdef DELETE
+#undef DELETE
+#endif
+#ifdef ERROR
+#undef ERROR
+#endif
+#ifdef IN
+#undef IN
+#endif
+#ifdef OUT
+#undef OUT
+#endif
+#ifdef OPTIONAL
+#undef OPTIONAL
+#endif
+#endif
 #include "ThriftHiveMetastore.h"
 
 #include <thrift/transport/TSocket.h>
