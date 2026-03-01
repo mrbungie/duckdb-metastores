@@ -18,6 +18,7 @@ jobs:
     with:
       duckdb_version: v1.4.4
       ci_tools_version: v1.4.4
+      exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;windows_amd64_rtools;windows_amd64_mingw'
       extension_name: metastore
       extra_toolchains: parser_tools
 
