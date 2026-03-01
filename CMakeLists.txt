@@ -27,6 +27,8 @@ build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 # Link OpenSSL and Thrift in both the static library as the loadable extension
 target_link_libraries(${EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto thrift::thrift)
 target_link_libraries(${LOADABLE_EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto thrift::thrift)
+target_include_directories(${EXTENSION_NAME} PRIVATE thrift::thrift)
+target_include_directories(${LOADABLE_EXTENSION_NAME} PRIVATE thrift::thrift)
 
 install(
   TARGETS ${EXTENSION_NAME}
