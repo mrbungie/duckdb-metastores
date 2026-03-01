@@ -25,6 +25,8 @@ jobs:
       HMS_LOCAL_ENDPOINT: 127.0.0.1:9083
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 500M
+      VCPKG_KEEP_ENV_VARS: "CCACHE_DIR;CCACHE_MAXSIZE;CCACHE_NOCOMPRESS;CC;CXX;PATH"
+      VCPKG_CMAKE_CONFIGURE_OPTIONS: "-DCMAKE_C_COMPILER_LAUNCHER=ccache;-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
     defaults:
       run:
         shell: bash

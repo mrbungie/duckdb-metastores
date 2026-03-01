@@ -15,6 +15,7 @@ git clone https://github.com/Microsoft/vcpkg.git
 ./vcpkg/bootstrap-vcpkg.sh
 export VCPKG_TOOLCHAIN_PATH=`pwd`/vcpkg/scripts/buildsystems/vcpkg.cmake
 ```
+Note: This extension requires `thrift` and `openssl`. If using VCPKG, these are automatically handled via `vcpkg.json`. Otherwise, ensure the Apache Thrift C++ library and compiler are installed on your system.
 Note: VCPKG is only required for extensions that want to rely on it for dependency management. If you want to develop an extension without dependencies, or want to do your own dependency management, just skip this step. Note that the example extension uses VCPKG to build with a dependency for instructive purposes, so when skipping this step the build may not work without removing the dependency.
 
 ### Build steps
@@ -35,15 +36,10 @@ The main binaries that will be built are:
 ## Running the extension
 To run the extension code, simply start the shell with `./build/release/duckdb`.
 
-Now we can use the features from the extension directly in DuckDB. The template contains a single scalar function `metastore()` that takes a string arguments and returns a string:
-```
-D select metastore('Jane') as result;
-┌───────────────┐
-│    result     │
-│    varchar    │
-├───────────────┤
-│ Metastore Jane 🐥 │
-└───────────────┘
+The Metastore extension allows attaching external catalogs. For example, to attach a Hive Metastore:
+```sql
+ATTACH 'thrift://localhost:9083' AS hms (TYPE metastore);
+SELECT * FROM hms.default.my_table;
 ```
 
 ## Running the tests
