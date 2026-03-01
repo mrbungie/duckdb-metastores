@@ -1,7 +1,7 @@
 #pragma once
 
-#include "hms/hms_config.hpp"
-#include "metastore_connector.hpp"
+#include "providers/hms/hms_config.hpp"
+#include "main/metastore_connector.hpp"
 
 namespace duckdb {
 

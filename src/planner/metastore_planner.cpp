@@ -1,11 +1,8 @@
 #include "planner/metastore_planner.hpp"
-#include "duckdb/optimizer/filter_combiner.hpp"
 #include "duckdb/planner/table_filter.hpp"
 #include "duckdb/planner/filter/conjunction_filter.hpp"
 #include "duckdb/planner/filter/constant_filter.hpp"
 #include "duckdb/planner/filter/in_filter.hpp"
-#include "duckdb/planner/filter/null_filter.hpp"
-#include "duckdb/common/string_util.hpp"
 
 namespace duckdb {
 

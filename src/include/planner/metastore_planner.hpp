@@ -1,6 +1,6 @@
 #pragma once
 
-#include "metastore_types.hpp"
+#include "main/metastore_types.hpp"
 #include "duckdb/common/column_index.hpp"
 #include "duckdb/planner/table_filter.hpp"
 

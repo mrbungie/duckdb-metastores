@@ -1,6 +1,6 @@
 #pragma once
 
-#include "metastore_errors.hpp"
+#include "main/metastore_errors.hpp"
 #include "duckdb.hpp"
 
 #include <optional>

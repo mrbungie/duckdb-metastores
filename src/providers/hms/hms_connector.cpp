@@ -1,6 +1,6 @@
-#include "hms/hms_connector.hpp"
-#include "hms/hms_mapper.hpp"
-#include "hms/generated/ThriftHiveMetastore.h"
+#include "providers/hms/hms_connector.hpp"
+#include "providers/hms/hms_mapper.hpp"
+#include "ThriftHiveMetastore.h"
 
 #include <thrift/transport/TSocket.h>
 #include <thrift/transport/TBufferTransports.h>
@@ -16,10 +16,19 @@ namespace duckdb {
 
 namespace {
 
-using namespace apache::thrift;
-using namespace apache::thrift::protocol;
-using namespace apache::thrift::transport;
-using namespace Apache::Hadoop::Hive;
+using Apache::Hadoop::Hive::GetTableRequest;
+using Apache::Hadoop::Hive::GetTableResult;
+using Apache::Hadoop::Hive::MetaException;
+using Apache::Hadoop::Hive::NoSuchObjectException;
+using Apache::Hadoop::Hive::Table;
+using Apache::Hadoop::Hive::ThriftHiveMetastoreClient;
+using apache::thrift::TException;
+using apache::thrift::protocol::TBinaryProtocol;
+using apache::thrift::protocol::TProtocol;
+using apache::thrift::transport::TBufferedTransport;
+using apache::thrift::transport::TSocket;
+using apache::thrift::transport::TTransport;
+using apache::thrift::transport::TTransportException;
 
 struct HmsClientContext {
 	std::shared_ptr<TTransport> transport;

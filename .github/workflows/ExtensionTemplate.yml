@@ -38,7 +38,9 @@ jobs:
             libssl-dev \
             zip \
             unzip \
-            curl
+            curl \
+            flex \
+            bison
       
       - uses: actions/checkout@v4
         with:

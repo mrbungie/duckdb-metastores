@@ -41,7 +41,9 @@ jobs:
             zip \
             unzip \
             curl \
-            ccache
+            ccache \
+            flex \
+            bison
 
       - uses: actions/checkout@v4
         with:

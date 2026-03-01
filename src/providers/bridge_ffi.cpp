@@ -1,5 +1,5 @@
-#include "metastore_connector.hpp"
-#include "metastore_ffi.h"
+#include "main/metastore_connector.hpp"
+#include "main/metastore_ffi.h"
 
 #include <memory>
 #include <string>

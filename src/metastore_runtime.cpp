@@ -1,4 +1,4 @@
-#include "metastore_runtime.hpp"
+#include "main/metastore_runtime.hpp"
 
 #include "duckdb/common/string_util.hpp"
 

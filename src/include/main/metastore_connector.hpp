@@ -1,6 +1,6 @@
 #pragma once
 
-#include "metastore_types.hpp"
+#include "main/metastore_types.hpp"
 
 #include <memory>
 #include <string>

@@ -1,23 +1,19 @@
-#include "metastore_functions.hpp"
-#include "metastore_runtime.hpp"
-#include "metastore_connector.hpp"
+#include "main/metastore_functions.hpp"
+#include "main/metastore_runtime.hpp"
+#include "main/metastore_connector.hpp"
+#include "auth/metastore_secret_bridge.hpp"
 #include "planner/metastore_planner.hpp"
-#include "hms/hms_config.hpp"
-#include "hms/hms_connector.hpp"
-#include "duckdb.hpp"
+#include "providers/hms/hms_config.hpp"
+#include "providers/hms/hms_connector.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/optimizer/filter_combiner.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/common/insertion_order_preserving_map.hpp"
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
-#include "duckdb/parser/expression/constant_expression.hpp"
-#include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/common/string_util.hpp"
-#include "duckdb/main/extension_helper.hpp"
 #include "duckdb/catalog/catalog.hpp"
-#include "duckdb/parser/expression/comparison_expression.hpp"
 #include <filesystem>
 
 namespace duckdb {
@@ -210,8 +206,8 @@ static std::vector<std::string> PartitionNames(const MetastoreTable &table,
 	return names;
 }
 
-static void AddNamedParameter(named_parameter_map_t &named_parameters, const string &name, Value value) {
-	named_parameters[name] = std::move(value);
+static void AddNamedParameter(named_parameter_map_t &named_parameters, const string &name, const Value &value) {
+	named_parameters[name] = value;
 }
 
 static void BindUnderlyingFunction(ClientContext &context, MetastoreReadBindData &bind_data) {
