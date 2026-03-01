@@ -7,6 +7,7 @@ set(TARGET_NAME metastore)
 # used in cmake with find_package. Feel free to remove or replace with other dependencies.
 # Note that it should also be removed from vcpkg.json to prevent needlessly installing it..
 find_package(OpenSSL REQUIRED)
+find_package(Thrift CONFIG REQUIRED)
 
 set(EXTENSION_NAME ${TARGET_NAME}_extension)
 set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
@@ -17,14 +18,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 include_directories(src/include src src/providers)
 
-set(EXTENSION_SOURCES src/metastore_extension.cpp src/metastore_functions.cpp src/metastore_runtime.cpp src/auth/metastore_secret_bridge.cpp src/planner/metastore_planner.cpp src/providers/hms/hms_connector.cpp src/providers/hms/hms_mapper.cpp src/functions/metastore_read.cpp)
+set(EXTENSION_SOURCES src/metastore_extension.cpp src/metastore_functions.cpp src/metastore_runtime.cpp src/auth/metastore_secret_bridge.cpp src/planner/metastore_planner.cpp src/providers/hms/hms_connector.cpp src/providers/hms/hms_mapper.cpp src/providers/hms/generated/hive_metastore_constants.cpp src/providers/hms/generated/hive_metastore_types.cpp src/providers/hms/generated/ThriftHiveMetastore.cpp src/providers/hms/generated/FacebookService.cpp src/providers/hms/generated/fb303_types.cpp src/functions/metastore_read.cpp)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
 # Link OpenSSL in both the static library as the loadable extension
-target_link_libraries(${EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto)
-target_link_libraries(${LOADABLE_EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto)
+target_link_libraries(${EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto thrift::thrift)
+target_link_libraries(${LOADABLE_EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto thrift::thrift)
 
 install(
   TARGETS ${EXTENSION_NAME}
