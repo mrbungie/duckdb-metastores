@@ -66,12 +66,7 @@ add_custom_command(
 add_library(hms_thrift_lib OBJECT ${THRIFT_GENERATED_FILES})
 target_include_directories(hms_thrift_lib PUBLIC ${THRIFT_OUT_DIR})
 target_link_libraries(hms_thrift_lib PUBLIC thrift::thrift)
-if(MSVC)
-  file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/windows_undef.h "#include <windows.h>\n#undef DELETE\n#undef GLOBAL\n#undef USER\n#undef ROLE")
-  target_compile_options(hms_thrift_lib PRIVATE /W0 /FI${CMAKE_CURRENT_BINARY_DIR}/windows_undef.h)
-else()
-  target_compile_options(hms_thrift_lib PRIVATE -Wno-unused-parameter -Wno-missing-field-initializers)
-endif()
+target_compile_options(hms_thrift_lib PRIVATE -Wno-unused-parameter -Wno-missing-field-initializers)
 
 # Export the generated include directory to parent scope if needed
 set(HMS_THRIFT_INCLUDE_DIR ${THRIFT_OUT_DIR} PARENT_SCOPE)
