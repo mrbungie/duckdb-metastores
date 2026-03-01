@@ -40,12 +40,13 @@ struct MetastoreReadBindData : public TableFunctionData {
 	// Wrapping the underlying scan (e.g. read_parquet)
 	unique_ptr<FunctionData> underlying_bind_data;
 	TableFunction underlying_function;
-	
+
 	vector<LogicalType> return_types;
 	vector<string> names;
 
 	MetastoreReadBindData(std::string catalog_p, std::string schema_p, std::string table_name_p)
-	    : catalog(std::move(catalog_p)), schema(std::move(schema_p)), table_name(std::move(table_name_p)), is_partitioned(false) {
+	    : catalog(std::move(catalog_p)), schema(std::move(schema_p)), table_name(std::move(table_name_p)),
+	      is_partitioned(false) {
 	}
 
 	bool Equals(const FunctionData &other_p) const override {
@@ -81,17 +82,28 @@ static string TrimTypeSuffix(string hive_type) {
 
 static string MapHiveTypeToDuckDB(const string &hive_type) {
 	auto normalized = TrimTypeSuffix(hive_type);
-	if (normalized == "tinyint") return "TINYINT";
-	if (normalized == "smallint") return "SMALLINT";
-	if (normalized == "int" || normalized == "integer") return "INTEGER";
-	if (normalized == "bigint") return "BIGINT";
-	if (normalized == "float") return "FLOAT";
-	if (normalized == "double") return "DOUBLE";
-	if (normalized == "boolean") return "BOOLEAN";
-	if (normalized == "date") return "DATE";
-	if (normalized == "timestamp") return "TIMESTAMP";
-	if (normalized == "string" || normalized == "varchar" || normalized == "char") return "VARCHAR";
-	if (normalized == "binary") return "BLOB";
+	if (normalized == "tinyint")
+		return "TINYINT";
+	if (normalized == "smallint")
+		return "SMALLINT";
+	if (normalized == "int" || normalized == "integer")
+		return "INTEGER";
+	if (normalized == "bigint")
+		return "BIGINT";
+	if (normalized == "float")
+		return "FLOAT";
+	if (normalized == "double")
+		return "DOUBLE";
+	if (normalized == "boolean")
+		return "BOOLEAN";
+	if (normalized == "date")
+		return "DATE";
+	if (normalized == "timestamp")
+		return "TIMESTAMP";
+	if (normalized == "string" || normalized == "varchar" || normalized == "char")
+		return "VARCHAR";
+	if (normalized == "binary")
+		return "BLOB";
 	return "VARCHAR";
 }
 
@@ -167,7 +179,8 @@ static std::string JoinPreview(const std::vector<std::string> &values, idx_t lim
 	return result;
 }
 
-static std::vector<std::string> PartitionNames(const MetastoreTable &table, const std::vector<MetastorePartitionValue> &partitions) {
+static std::vector<std::string> PartitionNames(const MetastoreTable &table,
+                                               const std::vector<MetastorePartitionValue> &partitions) {
 	std::vector<std::string> names;
 	for (auto &part : partitions) {
 		std::string name;
@@ -209,14 +222,17 @@ static void BindUnderlyingFunction(ClientContext &context, MetastoreReadBindData
 	}
 
 	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto &func_catalog = Catalog::GetEntry(context, CatalogType::TABLE_FUNCTION_ENTRY, SYSTEM_CATALOG,
-	                                      DEFAULT_SCHEMA, scan_function_name).Cast<TableFunctionCatalogEntry>();
-	bind_data.underlying_function = func_catalog.functions.GetFunctionByArguments(context, {LogicalType::LIST(LogicalType::VARCHAR)});
+	auto &func_catalog = Catalog::GetEntry(context, CatalogType::TABLE_FUNCTION_ENTRY, SYSTEM_CATALOG, DEFAULT_SCHEMA,
+	                                       scan_function_name)
+	                         .Cast<TableFunctionCatalogEntry>();
+	bind_data.underlying_function =
+	    func_catalog.functions.GetFunctionByArguments(context, {LogicalType::LIST(LogicalType::VARCHAR)});
 
 	vector<Value> file_list;
 	if (bind_data.scan_files.empty()) {
 		// Just a dummy so it won't crash
-		file_list.push_back(Value(BuildScanPath(bind_data.table.storage_descriptor.location, bind_data.table.storage_descriptor.format)));
+		file_list.push_back(Value(
+		    BuildScanPath(bind_data.table.storage_descriptor.location, bind_data.table.storage_descriptor.format)));
 	} else {
 		for (auto &file : bind_data.scan_files) {
 			file_list.push_back(Value(file));
@@ -265,11 +281,12 @@ static void BindUnderlyingFunction(ClientContext &context, MetastoreReadBindData
 	vector<Value> bind_inputs;
 	bind_inputs.push_back(Value::LIST(LogicalType::VARCHAR, file_list));
 	auto table_func_ref = make_uniq<TableFunctionRef>();
-	TableFunctionBindInput bind_input(bind_inputs, named_parameters, input_table_types, input_table_names, nullptr, nullptr,
-	                                 bind_data.underlying_function, *table_func_ref);
-	
+	TableFunctionBindInput bind_input(bind_inputs, named_parameters, input_table_types, input_table_names, nullptr,
+	                                  nullptr, bind_data.underlying_function, *table_func_ref);
+
 	try {
-		bind_data.underlying_bind_data = bind_data.underlying_function.bind(context, bind_input, bind_data.return_types, bind_data.names);
+		bind_data.underlying_bind_data =
+		    bind_data.underlying_function.bind(context, bind_input, bind_data.return_types, bind_data.names);
 		if (bind_data.is_partitioned && !bind_data.table.storage_descriptor.columns.empty()) {
 			auto data_col_count = bind_data.table.storage_descriptor.columns.size();
 			if (bind_data.names.size() >= data_col_count) {
@@ -323,7 +340,8 @@ unique_ptr<FunctionData> MetastoreReadBind(ClientContext &context, TableFunction
 	bind_data->is_partitioned = bind_data->table.IsPartitioned();
 
 	if (!bind_data->is_partitioned) {
-		bind_data->scan_files.push_back(BuildScanPath(bind_data->table.storage_descriptor.location, bind_data->table.storage_descriptor.format));
+		bind_data->scan_files.push_back(
+		    BuildScanPath(bind_data->table.storage_descriptor.location, bind_data->table.storage_descriptor.format));
 	} else {
 		// Initialize with empty scan files, wait for pushdown to provide the filter to list partitions
 		// If pushdown doesn't prune, we will list all. Wait, if we list them now, duckdb types might infer correctly.
@@ -337,8 +355,8 @@ unique_ptr<FunctionData> MetastoreReadBind(ClientContext &context, TableFunction
 				}
 			}
 			if (bind_data->scan_files.empty()) {
-				bind_data->scan_files.push_back(
-				    BuildScanPath(bind_data->table.storage_descriptor.location, bind_data->table.storage_descriptor.format));
+				bind_data->scan_files.push_back(BuildScanPath(bind_data->table.storage_descriptor.location,
+				                                              bind_data->table.storage_descriptor.format));
 			}
 		} else {
 			throw BinderException("Failed to list partitions: %s", parts_result.error.message);
@@ -346,7 +364,7 @@ unique_ptr<FunctionData> MetastoreReadBind(ClientContext &context, TableFunction
 	}
 
 	BindUnderlyingFunction(context, *bind_data);
-	
+
 	return_types = bind_data->return_types;
 	names = bind_data->names;
 
@@ -367,7 +385,8 @@ void MetastoreReadPushdownComplexFilter(ClientContext &context, LogicalGet &get,
 	}
 	vector<FilterPushdownResult> pushdown_results;
 	TableFilterSet filter_set = combiner.GenerateTableScanFilters(get.GetColumnIds(), pushdown_results);
-	std::string hms_predicate = MetastorePlanner::GeneratePartitionPredicate(bind_data.table, filter_set, get.GetColumnIds(), bind_data.names);
+	std::string hms_predicate =
+	    MetastorePlanner::GeneratePartitionPredicate(bind_data.table, filter_set, get.GetColumnIds(), bind_data.names);
 
 	auto parts_result = bind_data.connector->ListPartitions(bind_data.schema, bind_data.table_name, hms_predicate);
 	if (parts_result.IsOk()) {
@@ -389,11 +408,10 @@ void MetastoreReadPushdownComplexFilter(ClientContext &context, LogicalGet &get,
 
 	// Delegate to DuckDB's native multi-file reader to execute complex functions in-memory against the partitions
 	if (bind_data.underlying_function.pushdown_complex_filter) {
-		bind_data.underlying_function.pushdown_complex_filter(context, get, bind_data.underlying_bind_data.get(), filters);
+		bind_data.underlying_function.pushdown_complex_filter(context, get, bind_data.underlying_bind_data.get(),
+		                                                      filters);
 	}
 }
-
-
 
 struct MetastoreReadGlobalState : public GlobalTableFunctionState {
 	unique_ptr<GlobalTableFunctionState> underlying_state;
@@ -403,7 +421,8 @@ unique_ptr<GlobalTableFunctionState> MetastoreReadInitGlobal(ClientContext &cont
 	auto &bind_data = input.bind_data->Cast<MetastoreReadBindData>();
 	auto gstate = make_uniq<MetastoreReadGlobalState>();
 	if (bind_data.underlying_function.init_global) {
-		TableFunctionInitInput underlying_input(bind_data.underlying_bind_data.get(), input.column_ids, input.projection_ids, input.filters);
+		TableFunctionInitInput underlying_input(bind_data.underlying_bind_data.get(), input.column_ids,
+		                                        input.projection_ids, input.filters);
 		gstate->underlying_state = bind_data.underlying_function.init_global(context, underlying_input);
 	}
 	return std::move(gstate);
@@ -419,8 +438,10 @@ unique_ptr<LocalTableFunctionState> MetastoreReadInitLocal(ExecutionContext &con
 	auto &gstate = global_state->Cast<MetastoreReadGlobalState>();
 	auto lstate = make_uniq<MetastoreReadLocalState>();
 	if (bind_data.underlying_function.init_local) {
-		TableFunctionInitInput underlying_input(bind_data.underlying_bind_data.get(), input.column_ids, input.projection_ids, input.filters);
-		lstate->underlying_state = bind_data.underlying_function.init_local(context, underlying_input, gstate.underlying_state.get());
+		TableFunctionInitInput underlying_input(bind_data.underlying_bind_data.get(), input.column_ids,
+		                                        input.projection_ids, input.filters);
+		lstate->underlying_state =
+		    bind_data.underlying_function.init_local(context, underlying_input, gstate.underlying_state.get());
 	}
 	return std::move(lstate);
 }
@@ -429,13 +450,14 @@ void MetastoreReadExecute(ClientContext &context, TableFunctionInput &data, Data
 	auto &bind_data = data.bind_data->Cast<MetastoreReadBindData>();
 	auto &gstate = data.global_state->Cast<MetastoreReadGlobalState>();
 	auto &lstate = data.local_state->Cast<MetastoreReadLocalState>();
-	
+
 	if (bind_data.scan_files.empty()) {
 		output.SetCardinality(0);
 		return;
 	}
 
-	TableFunctionInput underlying_input(bind_data.underlying_bind_data.get(), lstate.underlying_state.get(), gstate.underlying_state.get());
+	TableFunctionInput underlying_input(bind_data.underlying_bind_data.get(), lstate.underlying_state.get(),
+	                                    gstate.underlying_state.get());
 	bind_data.underlying_function.function(context, underlying_input, output);
 }
 

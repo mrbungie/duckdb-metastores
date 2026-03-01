@@ -29,12 +29,15 @@ struct MetastorePlannerResult {
 
 class MetastorePlanner {
 public:
-	static MetastorePlannerResult Plan(const MetastoreTable &table, const std::vector<std::string> &requested_namespaces,
-	                                  const std::vector<std::string> &requested_tables);
+	static MetastorePlannerResult Plan(const MetastoreTable &table,
+	                                   const std::vector<std::string> &requested_namespaces,
+	                                   const std::vector<std::string> &requested_tables);
 
 	static bool CanPrunePartitions(const MetastoreTable &table);
 
-	static std::string GeneratePartitionPredicate(const MetastoreTable &table, const TableFilterSet &filter_set, const vector<ColumnIndex> &column_ids, const std::vector<std::string> &names);
+	static std::string GeneratePartitionPredicate(const MetastoreTable &table, const TableFilterSet &filter_set,
+	                                              const vector<ColumnIndex> &column_ids,
+	                                              const std::vector<std::string> &names);
 };
 
-}
+} // namespace duckdb

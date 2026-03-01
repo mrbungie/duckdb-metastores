@@ -1,6 +1,6 @@
 # name: test/sql/metastore/generic/auth_errors.test
 # description: verify auth error messages are actionable and mention the missing option
-# group: [sql]
+# group: [generic]
 
 require metastore
 

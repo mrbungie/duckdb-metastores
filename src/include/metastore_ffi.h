@@ -154,28 +154,20 @@ void metastore_key_value_list_free(MetastoreFFIKeyValueList *list);
 /* must call the matching _free function.                              */
 /* ------------------------------------------------------------------ */
 
-MetastoreFFIError metastore_list_namespaces(MetastoreConnectorHandle handle,
-                                            MetastoreFFINamespaceList *out);
+MetastoreFFIError metastore_list_namespaces(MetastoreConnectorHandle handle, MetastoreFFINamespaceList *out);
 
-MetastoreFFIError metastore_list_tables(MetastoreConnectorHandle handle,
-                                        const char *namespace_name,
+MetastoreFFIError metastore_list_tables(MetastoreConnectorHandle handle, const char *namespace_name,
                                         MetastoreFFIStringList *out);
 
-MetastoreFFIError metastore_get_table(MetastoreConnectorHandle handle,
-                                      const char *namespace_name,
-                                      const char *table_name,
-                                      MetastoreFFITable *out);
+MetastoreFFIError metastore_get_table(MetastoreConnectorHandle handle, const char *namespace_name,
+                                      const char *table_name, MetastoreFFITable *out);
 
-MetastoreFFIError metastore_list_partitions(MetastoreConnectorHandle handle,
-                                            const char *namespace_name,
-                                            const char *table_name,
-                                            const char *predicate,
+MetastoreFFIError metastore_list_partitions(MetastoreConnectorHandle handle, const char *namespace_name,
+                                            const char *table_name, const char *predicate,
                                             MetastoreFFIPartitionValueList *out);
 
-MetastoreFFIError metastore_get_table_stats(MetastoreConnectorHandle handle,
-                                            const char *namespace_name,
-                                            const char *table_name,
-                                            MetastoreFFIKeyValueList *out);
+MetastoreFFIError metastore_get_table_stats(MetastoreConnectorHandle handle, const char *namespace_name,
+                                            const char *table_name, MetastoreFFIKeyValueList *out);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -44,29 +44,27 @@ static std::optional<std::string> ExtractGlueRegionFromArn(const std::string &en
 
 static void ValidateHMS(const MetastoreConnectorConfig &config) {
 	if (config.endpoint.empty()) {
-		throw_metastore_error(
-		    MetastoreErrorCode::InvalidConfig,
-		    MetastoreErrorTag {"hms", "ResolveConnectorConfig", false},
-		    "HMS requires endpoint in ATTACH path. "
-		    "Example: ATTACH 'thrift://hms-host:9083' AS hms (TYPE metastore)");
+		throw_metastore_error(MetastoreErrorCode::InvalidConfig,
+		                      MetastoreErrorTag {"hms", "ResolveConnectorConfig", false},
+		                      "HMS requires endpoint in ATTACH path. "
+		                      "Example: ATTACH 'thrift://hms-host:9083' AS hms (TYPE metastore)");
 	}
 }
 
 static void ValidateGlue(const MetastoreConnectorConfig &config) {
 	if (!config.region.has_value() || config.region->empty()) {
-		throw_metastore_error(
-		    MetastoreErrorCode::InvalidConfig,
-		    MetastoreErrorTag {"glue", "ResolveConnectorConfig", false},
-		    "Glue requires REGION parameter. "
-		    "Example: ATTACH 'arn:aws:glue:us-east-1:123456789012:catalog' AS glue (TYPE metastore, REGION 'us-east-1')");
+		throw_metastore_error(MetastoreErrorCode::InvalidConfig,
+		                      MetastoreErrorTag {"glue", "ResolveConnectorConfig", false},
+		                      "Glue requires REGION parameter. "
+		                      "Example: ATTACH 'arn:aws:glue:us-east-1:123456789012:catalog' AS glue (TYPE metastore, "
+		                      "REGION 'us-east-1')");
 	}
 }
 
 static void ValidateDataproc(const MetastoreConnectorConfig &config) {
 	if (config.endpoint.empty()) {
 		throw_metastore_error(
-		    MetastoreErrorCode::InvalidConfig,
-		    MetastoreErrorTag {"dataproc", "ResolveConnectorConfig", false},
+		    MetastoreErrorCode::InvalidConfig, MetastoreErrorTag {"dataproc", "ResolveConnectorConfig", false},
 		    "Dataproc requires endpoint in ATTACH path. "
 		    "Example: ATTACH 'https://dataproc.googleapis.com/v1/projects/...' AS dp (TYPE metastore)");
 	}
@@ -127,14 +125,13 @@ static void ResolveSecret(const case_insensitive_map_t<Value> &options, Metastor
 MetastoreConnectorConfig ResolveConnectorConfig(const case_insensitive_map_t<Value> &options) {
 	auto type_str = GetOptionString(options, "TYPE");
 	auto endpoint_str = GetOptionString(options, "ENDPOINT");
-	
+
 	MetastoreConnectorConfig config;
 
 	// TYPE parameter must be 'metastore'
 	if (type_str.empty()) {
 		throw_metastore_error(
-		    MetastoreErrorCode::InvalidConfig,
-		    MetastoreErrorTag {"unknown", "ResolveConnectorConfig", false},
+		    MetastoreErrorCode::InvalidConfig, MetastoreErrorTag {"unknown", "ResolveConnectorConfig", false},
 		    "TYPE metastore is required. "
 		    "Examples: ATTACH 'thrift://hms-host:9083' AS hms (TYPE metastore) or "
 		    "ATTACH 'arn:aws:glue:us-east-1:123456789012:catalog' AS glue (TYPE metastore, REGION 'us-east-1')");
@@ -142,31 +139,29 @@ MetastoreConnectorConfig ResolveConnectorConfig(const case_insensitive_map_t<Val
 
 	auto lower = StringUtil::Lower(type_str);
 	if (lower != "metastore") {
-		throw_metastore_error(
-		    MetastoreErrorCode::InvalidConfig,
-		    MetastoreErrorTag {"unknown", "ResolveConnectorConfig", false},
-		    "TYPE must be 'metastore', got '" + type_str + "'");
+		throw_metastore_error(MetastoreErrorCode::InvalidConfig,
+		                      MetastoreErrorTag {"unknown", "ResolveConnectorConfig", false},
+		                      "TYPE must be 'metastore', got '" + type_str + "'");
 	}
 
 	if (endpoint_str.empty()) {
-		throw_metastore_error(
-		    MetastoreErrorCode::InvalidConfig,
-		    MetastoreErrorTag {"unknown", "ResolveConnectorConfig", false},
-		    "Endpoint is required in ATTACH path. "
-		    "Example: ATTACH 'thrift://hms-host:9083' AS hms (TYPE metastore)");
+		throw_metastore_error(MetastoreErrorCode::InvalidConfig,
+		                      MetastoreErrorTag {"unknown", "ResolveConnectorConfig", false},
+		                      "Endpoint is required in ATTACH path. "
+		                      "Example: ATTACH 'thrift://hms-host:9083' AS hms (TYPE metastore)");
 	}
 
 	config.provider = InferProviderFromUrl(endpoint_str);
 	if (config.provider == MetastoreProviderType::Unknown) {
-		throw_metastore_error(
-		    MetastoreErrorCode::InvalidConfig,
-		    MetastoreErrorTag {"unknown", "ResolveConnectorConfig", false},
-		    "Could not infer metastore provider from endpoint. "
-		    "Use thrift://, thrift+http(s)://, or http(s):// for HMS, arn:aws:glue: for Glue, or https://...dataproc... for Dataproc.");
+		throw_metastore_error(MetastoreErrorCode::InvalidConfig,
+		                      MetastoreErrorTag {"unknown", "ResolveConnectorConfig", false},
+		                      "Could not infer metastore provider from endpoint. "
+		                      "Use thrift://, thrift+http(s)://, or http(s):// for HMS, arn:aws:glue: for Glue, or "
+		                      "https://...dataproc... for Dataproc.");
 	}
 
 	config.endpoint = NormalizeEndpointScheme(endpoint_str);
-	
+
 	auto region_str = GetOptionString(options, "REGION");
 	if (!region_str.empty()) {
 		config.region = region_str;
@@ -196,10 +191,9 @@ MetastoreConnectorConfig ResolveConnectorConfig(const case_insensitive_map_t<Val
 		ValidateDataproc(config);
 		break;
 	default:
-		throw_metastore_error(
-		    MetastoreErrorCode::InvalidConfig,
-		    MetastoreErrorTag {provider_name, "ResolveConnectorConfig", false},
-		    "Provider '" + std::string(provider_name) + "' is not yet supported.");
+		throw_metastore_error(MetastoreErrorCode::InvalidConfig,
+		                      MetastoreErrorTag {provider_name, "ResolveConnectorConfig", false},
+		                      "Provider '" + std::string(provider_name) + "' is not yet supported.");
 	}
 
 	return config;

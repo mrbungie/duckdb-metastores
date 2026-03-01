@@ -34,11 +34,7 @@ enum class ThriftType : uint8_t {
 	List = 15
 };
 
-enum class ThriftMessageType : uint8_t {
-	Call = 1,
-	Reply = 2,
-	Exception = 3
-};
+enum class ThriftMessageType : uint8_t { Call = 1, Reply = 2, Exception = 3 };
 
 static constexpr int32_t THRIFT_VERSION_1 = 0x80010000;
 
@@ -303,22 +299,24 @@ MetastoreResult<int> ConnectSocket(const std::string &host, uint16_t port) {
 	}
 
 	freeaddrinfo(results);
-	return MetastoreResult<int>::Error(MetastoreErrorCode::Transient, "HMS socket connect failed",
-	                                   strerror(errno), true);
+	return MetastoreResult<int>::Error(MetastoreErrorCode::Transient, "HMS socket connect failed", strerror(errno),
+	                                   true);
 }
 
 MetastoreResult<int32_t> ReadMessageHeader(ThriftReader &reader, std::string &method_name,
-	                                        ThriftMessageType &message_type, int32_t &seqid) {
+                                           ThriftMessageType &message_type, int32_t &seqid) {
 	int32_t version_and_type;
 	if (!reader.ReadI32(version_and_type)) {
 		return MetastoreResult<int32_t>::Error(MetastoreErrorCode::Transient, "HMS response read failed", "", true);
 	}
 	if ((version_and_type & 0xFFFF0000) != THRIFT_VERSION_1) {
-		return MetastoreResult<int32_t>::Error(MetastoreErrorCode::Unsupported, "Unsupported Thrift version", "", false);
+		return MetastoreResult<int32_t>::Error(MetastoreErrorCode::Unsupported, "Unsupported Thrift version", "",
+		                                       false);
 	}
 	message_type = static_cast<ThriftMessageType>(version_and_type & 0x000000FF);
 	if (!reader.ReadString(method_name) || !reader.ReadI32(seqid)) {
-		return MetastoreResult<int32_t>::Error(MetastoreErrorCode::Transient, "HMS response header parse failed", "", true);
+		return MetastoreResult<int32_t>::Error(MetastoreErrorCode::Transient, "HMS response header parse failed", "",
+		                                       true);
 	}
 	return MetastoreResult<int32_t>::Success(0);
 }
@@ -341,15 +339,18 @@ MetastoreResult<int32_t> ParseApplicationException(ThriftReader &reader) {
 		}
 		if (field_id == 1 && field_type == ThriftType::String) {
 			if (!reader.ReadString(message)) {
-				return MetastoreResult<int32_t>::Error(MetastoreErrorCode::Transient, "Failed reading exception", "", true);
+				return MetastoreResult<int32_t>::Error(MetastoreErrorCode::Transient, "Failed reading exception", "",
+				                                       true);
 			}
 		} else if (field_id == 2 && field_type == ThriftType::I32) {
 			if (!reader.ReadI32(ex_type)) {
-				return MetastoreResult<int32_t>::Error(MetastoreErrorCode::Transient, "Failed reading exception", "", true);
+				return MetastoreResult<int32_t>::Error(MetastoreErrorCode::Transient, "Failed reading exception", "",
+				                                       true);
 			}
 		} else {
 			if (!reader.Skip(field_type)) {
-				return MetastoreResult<int32_t>::Error(MetastoreErrorCode::Transient, "Failed reading exception", "", true);
+				return MetastoreResult<int32_t>::Error(MetastoreErrorCode::Transient, "Failed reading exception", "",
+				                                       true);
 			}
 		}
 	}
@@ -409,7 +410,8 @@ bool ParseSerdeInfo(ThriftReader &reader, MetastoreStorageDescriptor &sd) {
 		} else if (field_id == 3 && field_type == ThriftType::Map) {
 			uint8_t key_type_raw, val_type_raw;
 			int32_t count;
-			if (!reader.ReadByte(key_type_raw) || !reader.ReadByte(val_type_raw) || !reader.ReadI32(count) || count < 0) {
+			if (!reader.ReadByte(key_type_raw) || !reader.ReadByte(val_type_raw) || !reader.ReadI32(count) ||
+			    count < 0) {
 				return false;
 			}
 			auto key_type = static_cast<ThriftType>(key_type_raw);
@@ -556,7 +558,8 @@ bool ParseTableStruct(ThriftReader &reader, MetastoreTable &table) {
 		} else if (field_id == 9 && field_type == ThriftType::Map) {
 			uint8_t key_type_raw, val_type_raw;
 			int32_t count;
-			if (!reader.ReadByte(key_type_raw) || !reader.ReadByte(val_type_raw) || !reader.ReadI32(count) || count < 0) {
+			if (!reader.ReadByte(key_type_raw) || !reader.ReadByte(val_type_raw) || !reader.ReadI32(count) ||
+			    count < 0) {
 				return false;
 			}
 			auto key_type = static_cast<ThriftType>(key_type_raw);
@@ -666,29 +669,29 @@ MetastoreResult<std::vector<std::string>> ParseStringListResult(ThriftReader &re
 		uint8_t field_type_raw;
 		if (!reader.ReadByte(field_type_raw)) {
 			return MetastoreResult<std::vector<std::string>>::Error(MetastoreErrorCode::Transient,
-			                                                     "Malformed HMS response", "", true);
+			                                                        "Malformed HMS response", "", true);
 		}
 		auto field_type = static_cast<ThriftType>(field_type_raw);
 		if (field_type == ThriftType::Stop) {
-			return MetastoreResult<std::vector<std::string>>::Error(MetastoreErrorCode::NotFound,
-			                                                     "Empty HMS result", "", false);
+			return MetastoreResult<std::vector<std::string>>::Error(MetastoreErrorCode::NotFound, "Empty HMS result",
+			                                                        "", false);
 		}
 		int16_t field_id;
 		if (!reader.ReadI16(field_id)) {
 			return MetastoreResult<std::vector<std::string>>::Error(MetastoreErrorCode::Transient,
-			                                                     "Malformed HMS response", "", true);
+			                                                        "Malformed HMS response", "", true);
 		}
 		if ((field_id == 0 || field_id == 1) && field_type == ThriftType::List) {
 			uint8_t elem_type_raw;
 			int32_t count;
 			if (!reader.ReadByte(elem_type_raw) || !reader.ReadI32(count) || count < 0) {
 				return MetastoreResult<std::vector<std::string>>::Error(MetastoreErrorCode::Transient,
-				                                                     "Malformed HMS list payload", "", true);
+				                                                        "Malformed HMS list payload", "", true);
 			}
 			auto elem_type = static_cast<ThriftType>(elem_type_raw);
 			if (elem_type != ThriftType::String) {
 				return MetastoreResult<std::vector<std::string>>::Error(MetastoreErrorCode::Unsupported,
-				                                                     "Unexpected HMS list element type", "", false);
+				                                                        "Unexpected HMS list element type", "", false);
 			}
 			std::vector<std::string> values;
 			values.reserve(static_cast<size_t>(count));
@@ -696,7 +699,7 @@ MetastoreResult<std::vector<std::string>> ParseStringListResult(ThriftReader &re
 				std::string item;
 				if (!reader.ReadString(item)) {
 					return MetastoreResult<std::vector<std::string>>::Error(MetastoreErrorCode::Transient,
-					                                                     "Malformed HMS list element", "", true);
+					                                                        "Malformed HMS list element", "", true);
 				}
 				values.push_back(std::move(item));
 			}
@@ -717,18 +720,18 @@ MetastoreResult<std::vector<std::string>> ParseStringListResult(ThriftReader &re
 		}
 		if (!reader.Skip(field_type)) {
 			return MetastoreResult<std::vector<std::string>>::Error(MetastoreErrorCode::Transient,
-			                                                     "Malformed HMS response", "", true);
+			                                                        "Malformed HMS response", "", true);
 		}
 	}
 }
 
 template <typename BuildArgs>
 MetastoreResult<int> InvokeRpc(const HmsConfig &config, const std::string &method_name, int32_t seqid,
-	                             BuildArgs build_args, std::function<MetastoreResult<int>(ThriftReader &)> parse_result) {
+                               BuildArgs build_args, std::function<MetastoreResult<int>(ThriftReader &)> parse_result) {
 	auto sock_result = ConnectSocket(config.endpoint, config.port);
 	if (!sock_result.IsOk()) {
 		return MetastoreResult<int>::Error(sock_result.error.code, std::move(sock_result.error.message),
-		                                  std::move(sock_result.error.detail), sock_result.error.retryable);
+		                                   std::move(sock_result.error.detail), sock_result.error.retryable);
 	}
 	SocketHandle socket(sock_result.value);
 
@@ -763,26 +766,26 @@ MetastoreResult<int> InvokeRpc(const HmsConfig &config, const std::string &metho
 	return parse_result(reader);
 }
 
-}
+} // namespace
 
 HmsConnector::HmsConnector(HmsConfig config) : config_(std::move(config)) {
 }
 
 MetastoreResult<std::vector<MetastoreNamespace>> HmsConnector::ListNamespaces() {
-	auto status = InvokeRpc(config_, "get_all_databases", 1,
-	                       [&](ThriftWriter &writer) {},
-	                       [&](ThriftReader &reader) {
-			                   auto parsed = ParseStringListResult(reader);
-			                   if (!parsed.IsOk()) {
-				                   return MetastoreResult<int>::Error(parsed.error.code, std::move(parsed.error.message),
-				                                                     std::move(parsed.error.detail), parsed.error.retryable);
-			                   }
-			                   namespaces_cache = std::move(parsed.value);
-			                   return MetastoreResult<int>::Success(0);
-		                   });
+	auto status = InvokeRpc(
+	    config_, "get_all_databases", 1, [&](ThriftWriter &writer) {},
+	    [&](ThriftReader &reader) {
+		    auto parsed = ParseStringListResult(reader);
+		    if (!parsed.IsOk()) {
+			    return MetastoreResult<int>::Error(parsed.error.code, std::move(parsed.error.message),
+			                                       std::move(parsed.error.detail), parsed.error.retryable);
+		    }
+		    namespaces_cache = std::move(parsed.value);
+		    return MetastoreResult<int>::Success(0);
+	    });
 	if (!status.IsOk()) {
-		return MetastoreResult<std::vector<MetastoreNamespace>>::Error(status.error.code, std::move(status.error.message),
-		                                                              std::move(status.error.detail), status.error.retryable);
+		return MetastoreResult<std::vector<MetastoreNamespace>>::Error(
+		    status.error.code, std::move(status.error.message), std::move(status.error.detail), status.error.retryable);
 	}
 	std::vector<MetastoreNamespace> result;
 	result.reserve(namespaces_cache.size());
@@ -797,23 +800,24 @@ MetastoreResult<std::vector<MetastoreNamespace>> HmsConnector::ListNamespaces() 
 
 MetastoreResult<std::vector<std::string>> HmsConnector::ListTables(const std::string &namespace_name) {
 	std::vector<std::string> tables;
-	auto status = InvokeRpc(config_, "get_all_tables", 2,
-	                       [&](ThriftWriter &writer) {
-		                       writer.WriteFieldBegin(ThriftType::String, 1);
-		                       writer.WriteString(namespace_name);
-	                       },
-	                       [&](ThriftReader &reader) {
-		                       auto parsed = ParseStringListResult(reader);
-		                       if (!parsed.IsOk()) {
-			                       return MetastoreResult<int>::Error(parsed.error.code, std::move(parsed.error.message),
-			                                                         std::move(parsed.error.detail), parsed.error.retryable);
-		                       }
-		                       tables = std::move(parsed.value);
-		                       return MetastoreResult<int>::Success(0);
-	                       });
+	auto status = InvokeRpc(
+	    config_, "get_all_tables", 2,
+	    [&](ThriftWriter &writer) {
+		    writer.WriteFieldBegin(ThriftType::String, 1);
+		    writer.WriteString(namespace_name);
+	    },
+	    [&](ThriftReader &reader) {
+		    auto parsed = ParseStringListResult(reader);
+		    if (!parsed.IsOk()) {
+			    return MetastoreResult<int>::Error(parsed.error.code, std::move(parsed.error.message),
+			                                       std::move(parsed.error.detail), parsed.error.retryable);
+		    }
+		    tables = std::move(parsed.value);
+		    return MetastoreResult<int>::Success(0);
+	    });
 	if (!status.IsOk()) {
 		return MetastoreResult<std::vector<std::string>>::Error(status.error.code, std::move(status.error.message),
-		                                                       std::move(status.error.detail), status.error.retryable);
+		                                                        std::move(status.error.detail), status.error.retryable);
 	}
 	return MetastoreResult<std::vector<std::string>>::Success(std::move(tables));
 }
@@ -822,52 +826,52 @@ MetastoreResult<MetastoreTable> HmsConnector::GetTable(const std::string &namesp
                                                        const std::string &table_name) {
 	MetastoreTable table;
 	table.catalog = "hms";
-	auto status = InvokeRpc(config_, "get_table", 3,
-	                       [&](ThriftWriter &writer) {
-		                       writer.WriteFieldBegin(ThriftType::String, 1);
-		                       writer.WriteString(namespace_name);
-		                       writer.WriteFieldBegin(ThriftType::String, 2);
-		                       writer.WriteString(table_name);
-	                       },
-	                       [&](ThriftReader &reader) {
-		                       bool found_success = false;
-		                       while (true) {
-			                       uint8_t field_type_raw;
-			                       if (!reader.ReadByte(field_type_raw)) {
-				                       return MetastoreResult<int>::Error(MetastoreErrorCode::Transient,
-				                                                         "Malformed HMS get_table response", "", true);
-			                       }
-			                       auto field_type = static_cast<ThriftType>(field_type_raw);
-			                       if (field_type == ThriftType::Stop) {
-				                       break;
-			                       }
-			                       int16_t field_id;
-			                       if (!reader.ReadI16(field_id)) {
-				                       return MetastoreResult<int>::Error(MetastoreErrorCode::Transient,
-				                                                         "Malformed HMS get_table response", "", true);
-			                       }
-			                       if (field_id == 0 && field_type == ThriftType::Struct) {
-				                       if (!ParseTableStruct(reader, table)) {
-					                       return MetastoreResult<int>::Error(MetastoreErrorCode::Transient,
-					                                                         "Failed to parse HMS table payload", "", true);
-				                       }
-				                       found_success = true;
-			                       } else {
-				                       if (!reader.Skip(field_type)) {
-					                       return MetastoreResult<int>::Error(MetastoreErrorCode::Transient,
-					                                                         "Malformed HMS get_table response", "", true);
-				                       }
-			                       }
-		                       }
-		                       if (!found_success) {
-			                       return MetastoreResult<int>::Error(MetastoreErrorCode::NotFound, "HMS table not found", "",
-			                                                         false);
-		                       }
-		                       return MetastoreResult<int>::Success(0);
-	                       });
+	auto status = InvokeRpc(
+	    config_, "get_table", 3,
+	    [&](ThriftWriter &writer) {
+		    writer.WriteFieldBegin(ThriftType::String, 1);
+		    writer.WriteString(namespace_name);
+		    writer.WriteFieldBegin(ThriftType::String, 2);
+		    writer.WriteString(table_name);
+	    },
+	    [&](ThriftReader &reader) {
+		    bool found_success = false;
+		    while (true) {
+			    uint8_t field_type_raw;
+			    if (!reader.ReadByte(field_type_raw)) {
+				    return MetastoreResult<int>::Error(MetastoreErrorCode::Transient,
+				                                       "Malformed HMS get_table response", "", true);
+			    }
+			    auto field_type = static_cast<ThriftType>(field_type_raw);
+			    if (field_type == ThriftType::Stop) {
+				    break;
+			    }
+			    int16_t field_id;
+			    if (!reader.ReadI16(field_id)) {
+				    return MetastoreResult<int>::Error(MetastoreErrorCode::Transient,
+				                                       "Malformed HMS get_table response", "", true);
+			    }
+			    if (field_id == 0 && field_type == ThriftType::Struct) {
+				    if (!ParseTableStruct(reader, table)) {
+					    return MetastoreResult<int>::Error(MetastoreErrorCode::Transient,
+					                                       "Failed to parse HMS table payload", "", true);
+				    }
+				    found_success = true;
+			    } else {
+				    if (!reader.Skip(field_type)) {
+					    return MetastoreResult<int>::Error(MetastoreErrorCode::Transient,
+					                                       "Malformed HMS get_table response", "", true);
+				    }
+			    }
+		    }
+		    if (!found_success) {
+			    return MetastoreResult<int>::Error(MetastoreErrorCode::NotFound, "HMS table not found", "", false);
+		    }
+		    return MetastoreResult<int>::Success(0);
+	    });
 	if (!status.IsOk()) {
 		return MetastoreResult<MetastoreTable>::Error(status.error.code, std::move(status.error.message),
-		                                             std::move(status.error.detail), status.error.retryable);
+		                                              std::move(status.error.detail), status.error.retryable);
 	}
 	auto mapped = HmsMapper::MapTable("hms", namespace_name, table_name, std::move(table.storage_descriptor),
 	                                  std::move(table.partition_spec), std::move(table.properties));
@@ -879,46 +883,45 @@ MetastoreResult<MetastoreTable> HmsConnector::GetTable(const std::string &namesp
 	return MetastoreResult<MetastoreTable>::Success(std::move(final_table));
 }
 
-MetastoreResult<std::vector<MetastorePartitionValue>>
-HmsConnector::ListPartitions(const std::string &namespace_name, const std::string &table_name,
-                             const std::string &predicate) {
+MetastoreResult<std::vector<MetastorePartitionValue>> HmsConnector::ListPartitions(const std::string &namespace_name,
+                                                                                   const std::string &table_name,
+                                                                                   const std::string &predicate) {
 	(void)predicate;
 
 	std::vector<std::string> partition_names;
-	auto status = InvokeRpc(config_, "get_partition_names", 4,
-	                       [&](ThriftWriter &writer) {
-		                       writer.WriteFieldBegin(ThriftType::String, 1);
-		                       writer.WriteString(namespace_name);
-		                       writer.WriteFieldBegin(ThriftType::String, 2);
-		                       writer.WriteString(table_name);
-		                       writer.WriteFieldBegin(ThriftType::I16, 3);
-		                       writer.WriteI16(-1);
-	                       },
-	                       [&](ThriftReader &reader) {
-		                       auto parsed = ParseStringListResult(reader);
-		                       if (!parsed.IsOk()) {
-			                       return MetastoreResult<int>::Error(parsed.error.code, std::move(parsed.error.message),
-			                                                         std::move(parsed.error.detail), parsed.error.retryable);
-		                       }
-		                       partition_names = std::move(parsed.value);
-		                       return MetastoreResult<int>::Success(0);
-	                       });
+	auto status = InvokeRpc(
+	    config_, "get_partition_names", 4,
+	    [&](ThriftWriter &writer) {
+		    writer.WriteFieldBegin(ThriftType::String, 1);
+		    writer.WriteString(namespace_name);
+		    writer.WriteFieldBegin(ThriftType::String, 2);
+		    writer.WriteString(table_name);
+		    writer.WriteFieldBegin(ThriftType::I16, 3);
+		    writer.WriteI16(-1);
+	    },
+	    [&](ThriftReader &reader) {
+		    auto parsed = ParseStringListResult(reader);
+		    if (!parsed.IsOk()) {
+			    return MetastoreResult<int>::Error(parsed.error.code, std::move(parsed.error.message),
+			                                       std::move(parsed.error.detail), parsed.error.retryable);
+		    }
+		    partition_names = std::move(parsed.value);
+		    return MetastoreResult<int>::Success(0);
+	    });
 	if (!status.IsOk()) {
 		if (status.error.code == MetastoreErrorCode::NotFound) {
 			partition_names.clear();
 		} else {
-			return MetastoreResult<std::vector<MetastorePartitionValue>>::Error(status.error.code,
-			                                                                  std::move(status.error.message),
-			                                                                  std::move(status.error.detail),
-			                                                                  status.error.retryable);
+			return MetastoreResult<std::vector<MetastorePartitionValue>>::Error(
+			    status.error.code, std::move(status.error.message), std::move(status.error.detail),
+			    status.error.retryable);
 		}
 	}
 	auto table_result = GetTable(namespace_name, table_name);
 	if (!table_result.IsOk()) {
-		return MetastoreResult<std::vector<MetastorePartitionValue>>::Error(table_result.error.code,
-		                                                                  std::move(table_result.error.message),
-		                                                                  std::move(table_result.error.detail),
-		                                                                  table_result.error.retryable);
+		return MetastoreResult<std::vector<MetastorePartitionValue>>::Error(
+		    table_result.error.code, std::move(table_result.error.message), std::move(table_result.error.detail),
+		    table_result.error.retryable);
 	}
 	const auto &table_location = table_result.value.storage_descriptor.location;
 	const bool table_location_has_trailing_slash = !table_location.empty() && table_location.back() == '/';
@@ -950,10 +953,9 @@ MetastoreResult<MetastoreTableProperties> HmsConnector::GetTableStats(const std:
                                                                       const std::string &table_name) {
 	auto table_result = GetTable(namespace_name, table_name);
 	if (!table_result.IsOk()) {
-		return MetastoreResult<MetastoreTableProperties>::Error(table_result.error.code,
-		                                                       std::move(table_result.error.message),
-		                                                       std::move(table_result.error.detail),
-		                                                       table_result.error.retryable);
+		return MetastoreResult<MetastoreTableProperties>::Error(
+		    table_result.error.code, std::move(table_result.error.message), std::move(table_result.error.detail),
+		    table_result.error.retryable);
 	}
 	return MetastoreResult<MetastoreTableProperties>::Success(std::move(table_result.value.properties));
 }
@@ -987,8 +989,7 @@ HmsConfig ParseHmsEndpoint(const std::string &endpoint) {
 	MetastoreErrorTag tag {"hms", "ParseHmsEndpoint", false};
 
 	if (endpoint.empty()) {
-		throw MetastoreException(MetastoreErrorCode::InvalidConfig, tag,
-		                         "HMS endpoint URI is empty");
+		throw MetastoreException(MetastoreErrorCode::InvalidConfig, tag, "HMS endpoint URI is empty");
 	}
 
 	HmsConfig config;
@@ -1002,8 +1003,7 @@ HmsConfig ParseHmsEndpoint(const std::string &endpoint) {
 	    endpoint.substr(0, thrift_ssl_scheme.size()) == thrift_ssl_scheme) {
 		config.transport = HmsTransport::ThriftTLS;
 		remainder = endpoint.substr(thrift_ssl_scheme.size());
-	} else if (endpoint.size() >= thrift_scheme.size() &&
-	           endpoint.substr(0, thrift_scheme.size()) == thrift_scheme) {
+	} else if (endpoint.size() >= thrift_scheme.size() && endpoint.substr(0, thrift_scheme.size()) == thrift_scheme) {
 		config.transport = HmsTransport::Thrift;
 		remainder = endpoint.substr(thrift_scheme.size());
 	} else {
@@ -1043,4 +1043,4 @@ HmsConfig ParseHmsEndpoint(const std::string &endpoint) {
 	return config;
 }
 
-}
+} // namespace duckdb

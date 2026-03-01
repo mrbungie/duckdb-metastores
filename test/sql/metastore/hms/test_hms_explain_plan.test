@@ -1,6 +1,6 @@
 # name: test/sql/metastore/hms/test_hms_explain_plan.test
 # description: Verify EXPLAIN output shows metastore_read pushdown filters
-# group: [metastore]
+# group: [hms]
 
 require metastore
 

@@ -9,15 +9,7 @@
 
 namespace duckdb {
 
-enum class MetastoreFormat : uint8_t {
-	Parquet,
-	JSON,
-	ORC,
-	CSV,
-	Delta,
-	Iceberg,
-	Unknown
-};
+enum class MetastoreFormat : uint8_t { Parquet, JSON, ORC, CSV, Delta, Iceberg, Unknown };
 
 inline const char *MetastoreFormatToString(MetastoreFormat fmt) {
 	switch (fmt) {

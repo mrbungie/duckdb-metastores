@@ -1,6 +1,6 @@
 # name: test/sql/metastore/generic/extension_load.test
 # description: verify the metastore extension loads and metastore_scan function exists
-# group: [sql]
+# group: [generic]
 
 # Before the extension is loaded, metastore_scan must not exist
 statement error

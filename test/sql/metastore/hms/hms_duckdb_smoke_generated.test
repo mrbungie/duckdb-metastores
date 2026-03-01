@@ -1,6 +1,6 @@
-# name: hms_duckdb_smoke_generated
+# name: test/sql/metastore/hms/hms_duckdb_smoke_generated.test
 # description: generated HMS + DuckDB integration checks
-# group: [sql]
+# group: [hms]
 
 require metastore
 

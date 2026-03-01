@@ -73,7 +73,7 @@ public:
 			auto err = ConvertFFIError(ffi_err);
 			metastore_error_free(&ffi_err);
 			return MetastoreResult<std::vector<MetastoreNamespace>>::Error(err.code, std::move(err.message),
-			                                                              std::move(err.detail), err.retryable);
+			                                                               std::move(err.detail), err.retryable);
 		}
 		metastore_error_free(&ffi_err);
 
@@ -99,7 +99,7 @@ public:
 			auto err = ConvertFFIError(ffi_err);
 			metastore_error_free(&ffi_err);
 			return MetastoreResult<std::vector<std::string>>::Error(err.code, std::move(err.message),
-			                                                       std::move(err.detail), err.retryable);
+			                                                        std::move(err.detail), err.retryable);
 		}
 		metastore_error_free(&ffi_err);
 
@@ -121,7 +121,7 @@ public:
 			auto err = ConvertFFIError(ffi_err);
 			metastore_error_free(&ffi_err);
 			return MetastoreResult<MetastoreTable>::Error(err.code, std::move(err.message), std::move(err.detail),
-			                                             err.retryable);
+			                                              err.retryable);
 		}
 		metastore_error_free(&ffi_err);
 
@@ -155,9 +155,9 @@ public:
 		return MetastoreResult<MetastoreTable>::Success(std::move(table));
 	}
 
-	MetastoreResult<std::vector<MetastorePartitionValue>>
-	ListPartitions(const std::string &namespace_name, const std::string &table_name,
-	               const std::string &predicate) override {
+	MetastoreResult<std::vector<MetastorePartitionValue>> ListPartitions(const std::string &namespace_name,
+	                                                                     const std::string &table_name,
+	                                                                     const std::string &predicate) override {
 		MetastoreFFIPartitionValueList ffi_list = {};
 		const char *pred = predicate.empty() ? nullptr : predicate.c_str();
 		MetastoreFFIError ffi_err =
@@ -166,8 +166,8 @@ public:
 		if (ffi_err.code != METASTORE_OK) {
 			auto err = ConvertFFIError(ffi_err);
 			metastore_error_free(&ffi_err);
-			return MetastoreResult<std::vector<MetastorePartitionValue>>::Error(
-			    err.code, std::move(err.message), std::move(err.detail), err.retryable);
+			return MetastoreResult<std::vector<MetastorePartitionValue>>::Error(err.code, std::move(err.message),
+			                                                                    std::move(err.detail), err.retryable);
 		}
 		metastore_error_free(&ffi_err);
 
@@ -188,13 +188,14 @@ public:
 	MetastoreResult<MetastoreTableProperties> GetTableStats(const std::string &namespace_name,
 	                                                        const std::string &table_name) override {
 		MetastoreFFIKeyValueList ffi_list = {};
-		MetastoreFFIError ffi_err = metastore_get_table_stats(handle, namespace_name.c_str(), table_name.c_str(), &ffi_list);
+		MetastoreFFIError ffi_err =
+		    metastore_get_table_stats(handle, namespace_name.c_str(), table_name.c_str(), &ffi_list);
 
 		if (ffi_err.code != METASTORE_OK) {
 			auto err = ConvertFFIError(ffi_err);
 			metastore_error_free(&ffi_err);
 			return MetastoreResult<MetastoreTableProperties>::Error(err.code, std::move(err.message),
-			                                                       std::move(err.detail), err.retryable);
+			                                                        std::move(err.detail), err.retryable);
 		}
 		metastore_error_free(&ffi_err);
 

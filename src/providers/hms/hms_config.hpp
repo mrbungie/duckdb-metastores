@@ -11,8 +11,8 @@ namespace duckdb {
 // HmsTransport — wire transport for the Thrift connection
 //===--------------------------------------------------------------------===//
 enum class HmsTransport : uint8_t {
-	Thrift = 0,    //! Plain Thrift (no TLS)
-	ThriftTLS = 1  //! Thrift over TLS
+	Thrift = 0,   //! Plain Thrift (no TLS)
+	ThriftTLS = 1 //! Thrift over TLS
 };
 
 inline const char *HmsTransportToString(HmsTransport transport) {

@@ -26,4 +26,4 @@ std::optional<MetastoreConnectorConfig> LookupMetastoreAttachConfig(const std::s
 	return it->second;
 }
 
-}
+} // namespace duckdb

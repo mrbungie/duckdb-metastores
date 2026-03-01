@@ -85,12 +85,12 @@ MetastoreFormat HmsMapper::DetectFormat(const MetastoreStorageDescriptor &sd) {
 }
 
 MetastoreResult<MetastoreTable> HmsMapper::MapTable(const std::string &catalog, const std::string &namespace_name,
-	                                                 const std::string &table_name, MetastoreStorageDescriptor sd,
-	                                                 MetastorePartitionSpec partition_spec,
-	                                                 MetastoreTableProperties properties) {
+                                                    const std::string &table_name, MetastoreStorageDescriptor sd,
+                                                    MetastorePartitionSpec partition_spec,
+                                                    MetastoreTableProperties properties) {
 	if (sd.location.empty()) {
-		return MetastoreResult<MetastoreTable>::Error(MetastoreErrorCode::InvalidConfig, "HMS table location is missing",
-		                                             table_name, false);
+		return MetastoreResult<MetastoreTable>::Error(MetastoreErrorCode::InvalidConfig,
+		                                              "HMS table location is missing", table_name, false);
 	}
 
 	sd.format = DetectFormat(sd);

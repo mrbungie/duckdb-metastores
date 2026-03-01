@@ -75,9 +75,9 @@ static string MapHiveTypeToDuckDB(const string &hive_type) {
 }
 
 static void AddNamedConstant(vector<unique_ptr<ParsedExpression>> &arguments, const string &name, Value value) {
-	auto named_arg = make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL,
-	                                                 make_uniq<ColumnRefExpression>(name),
-	                                                 make_uniq<ConstantExpression>(std::move(value)));
+	auto named_arg =
+	    make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL, make_uniq<ColumnRefExpression>(name),
+	                                    make_uniq<ConstantExpression>(std::move(value)));
 	arguments.push_back(std::move(named_arg));
 }
 
@@ -156,8 +156,8 @@ static unique_ptr<TableRef> MetastoreReplacementScan(ClientContext &context, Rep
 	}
 	auto table_function = make_uniq<TableFunctionRef>();
 	vector<unique_ptr<ParsedExpression>> arguments;
-	arguments.push_back(make_uniq<ConstantExpression>(
-	    Value(BuildScanPath(table_result.value.storage_descriptor.location, table_result.value.storage_descriptor.format))));
+	arguments.push_back(make_uniq<ConstantExpression>(Value(
+	    BuildScanPath(table_result.value.storage_descriptor.location, table_result.value.storage_descriptor.format))));
 	if (table_result.value.storage_descriptor.format == MetastoreFormat::CSV) {
 		AddNamedConstant(arguments, "header", Value::BOOLEAN(false));
 		auto serde_it = table_result.value.storage_descriptor.serde_parameters.find("field.delim");
@@ -182,8 +182,8 @@ static unique_ptr<TableRef> MetastoreReplacementScan(ClientContext &context, Rep
 }
 
 static unique_ptr<Catalog> MetastoreAttach(optional_ptr<StorageExtensionInfo> storage_info, ClientContext &context,
-	                                        AttachedDatabase &db, const string &name, AttachInfo &info,
-	                                        AttachOptions &attach_options) {
+                                           AttachedDatabase &db, const string &name, AttachInfo &info,
+                                           AttachOptions &attach_options) {
 	case_insensitive_map_t<Value> attach_kv;
 	for (auto &entry : info.options) {
 		attach_kv[entry.first] = entry.second;
@@ -203,9 +203,8 @@ static unique_ptr<Catalog> MetastoreAttach(optional_ptr<StorageExtensionInfo> st
 	return std::move(catalog);
 }
 
-static unique_ptr<TransactionManager>
-MetastoreCreateTransactionManager(optional_ptr<StorageExtensionInfo> storage_info, AttachedDatabase &db,
-	                              Catalog &catalog) {
+static unique_ptr<TransactionManager> MetastoreCreateTransactionManager(optional_ptr<StorageExtensionInfo> storage_info,
+                                                                        AttachedDatabase &db, Catalog &catalog) {
 	return make_uniq<DuckTransactionManager>(db);
 }
 

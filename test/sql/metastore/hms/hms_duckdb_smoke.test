@@ -1,6 +1,6 @@
-# name: test/sql/metastore/integration/hms_duckdb_smoke.test
+# name: test/sql/metastore/hms/hms_duckdb_smoke.test
 # description: validate DuckDB queries and HMS metastore_scan on local container
-# group: [sql]
+# group: [hms]
 
 require metastore
 

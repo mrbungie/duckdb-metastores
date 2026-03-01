@@ -49,9 +49,9 @@ struct MetastoreErrorTag {
 //! Exception class for metastore operations
 class MetastoreException : public std::runtime_error {
 public:
-	MetastoreException(MetastoreErrorCode code, const MetastoreErrorTag &tag,
-	                    const std::string &message)
-	    : std::runtime_error(message), error_code_(code), error_tag_(tag) {}
+	MetastoreException(MetastoreErrorCode code, const MetastoreErrorTag &tag, const std::string &message)
+	    : std::runtime_error(message), error_code_(code), error_tag_(tag) {
+	}
 
 	MetastoreErrorCode GetErrorCode() const {
 		return error_code_;
@@ -67,8 +67,7 @@ private:
 };
 
 //! Helper function to throw a metastore error
-inline void throw_metastore_error(MetastoreErrorCode code, const MetastoreErrorTag &tag,
-                                   const std::string &message) {
+inline void throw_metastore_error(MetastoreErrorCode code, const MetastoreErrorTag &tag, const std::string &message) {
 	throw MetastoreException(code, tag, message);
 }
 

@@ -12,12 +12,7 @@ namespace duckdb {
 //===--------------------------------------------------------------------===//
 // MetastoreProviderType - supported metastore backend providers
 //===--------------------------------------------------------------------===//
-enum class MetastoreProviderType : uint8_t {
-	HMS = 0,
-	Glue = 1,
-	Dataproc = 2,
-	Unknown = 255
-};
+enum class MetastoreProviderType : uint8_t { HMS = 0, Glue = 1, Dataproc = 2, Unknown = 255 };
 
 inline const char *MetastoreProviderTypeToString(MetastoreProviderType type) {
 	switch (type) {

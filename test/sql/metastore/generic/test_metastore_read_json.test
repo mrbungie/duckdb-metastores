@@ -1,6 +1,6 @@
 # name: test/sql/metastore/generic/test_metastore_read_json.test
 # description: Test JSON format reading errors natively
-# group: [metastore]
+# group: [generic]
 
 require metastore
 

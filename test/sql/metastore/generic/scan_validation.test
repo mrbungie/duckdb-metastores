@@ -1,6 +1,6 @@
 # name: test/sql/metastore/generic/scan_validation.test
 # description: validate metastore_scan argument constraints (count, nulls, empty strings)
-# group: [sql]
+# group: [generic]
 
 require metastore
 

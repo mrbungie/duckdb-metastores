@@ -91,16 +91,16 @@ public:
 	//! List partition values for a partitioned table.
 	//! @param predicate  Optional filter expression to push down to the metastore.
 	//!                   Empty string means "all partitions".
-	virtual MetastoreResult<std::vector<MetastorePartitionValue>>
-	ListPartitions(const std::string &namespace_name, const std::string &table_name,
-	               const std::string &predicate = "") = 0;
+	virtual MetastoreResult<std::vector<MetastorePartitionValue>> ListPartitions(const std::string &namespace_name,
+	                                                                             const std::string &table_name,
+	                                                                             const std::string &predicate = "") = 0;
 
 	//! (Optional) Retrieve table-level statistics if the metastore supports them.
 	//! Default implementation returns Unsupported.
 	virtual MetastoreResult<MetastoreTableProperties> GetTableStats(const std::string &namespace_name,
 	                                                                const std::string &table_name) {
 		return MetastoreResult<MetastoreTableProperties>::Error(MetastoreErrorCode::Unsupported,
-		                                                       "GetTableStats not supported by this connector");
+		                                                        "GetTableStats not supported by this connector");
 	}
 };
 

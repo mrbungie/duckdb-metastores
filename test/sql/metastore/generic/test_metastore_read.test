@@ -1,6 +1,6 @@
 # name: test/sql/metastore/generic/test_metastore_read.test
 # description: Test partition pruning and metastore_read directly
-# group: [metastore]
+# group: [generic]
 
 require metastore
 

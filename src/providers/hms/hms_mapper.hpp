@@ -21,9 +21,9 @@ public:
 	//! Returns Error(Unsupported) if the storage format is unrecognized and cannot be coerced.
 	//! Returns Error(InvalidConfig) if required fields (location) are missing.
 	static MetastoreResult<MetastoreTable> MapTable(const std::string &catalog, const std::string &namespace_name,
-	                                               const std::string &table_name, MetastoreStorageDescriptor sd,
-	                                               MetastorePartitionSpec partition_spec,
-	                                               MetastoreTableProperties properties);
+	                                                const std::string &table_name, MetastoreStorageDescriptor sd,
+	                                                MetastorePartitionSpec partition_spec,
+	                                                MetastoreTableProperties properties);
 };
 
 } // namespace duckdb

@@ -1,6 +1,6 @@
-# name: test/sql/metastore_scan.test
+# name: test/sql/metastore/generic/metastore_scan.test
 # description: test metastore_scan table function
-# group: [sql]
+# group: [generic]
 
 # Require metastore extension to be loaded
 require metastore
