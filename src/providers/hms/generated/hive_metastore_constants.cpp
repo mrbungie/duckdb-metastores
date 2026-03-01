@@ -102,4 +102,3 @@ hive_metastoreConstants::hive_metastoreConstants() {
 }
 
 }}} // namespace
-

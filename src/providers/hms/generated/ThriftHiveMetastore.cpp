@@ -128686,4 +128686,3 @@ void ThriftHiveMetastoreConcurrentClient::recv_get_replayed_txns_for_policy(Repl
 }
 
 }}} // namespace
-
