@@ -66,7 +66,11 @@ add_custom_command(
 add_library(hms_thrift_lib OBJECT ${THRIFT_GENERATED_FILES})
 target_include_directories(hms_thrift_lib PUBLIC ${THRIFT_OUT_DIR})
 target_link_libraries(hms_thrift_lib PUBLIC thrift::thrift)
-target_compile_options(hms_thrift_lib PRIVATE -Wno-unused-parameter -Wno-missing-field-initializers)
+if(MSVC)
+  target_compile_options(hms_thrift_lib PRIVATE /W0)
+else()
+  target_compile_options(hms_thrift_lib PRIVATE -Wno-unused-parameter -Wno-missing-field-initializers)
+endif()
 
 # Export the generated include directory to parent scope if needed
 set(HMS_THRIFT_INCLUDE_DIR ${THRIFT_OUT_DIR} PARENT_SCOPE)
