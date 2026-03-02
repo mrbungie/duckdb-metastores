@@ -70,7 +70,7 @@ if(WIN32)
   target_compile_definitions(hms_thrift_lib PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 endif()
 if(MSVC)
-  target_compile_options(hms_thrift_lib PRIVATE /wd4100 /wd4127 /wd4244 /wd4267)
+  target_compile_options(hms_thrift_lib PRIVATE /wd4100 /wd4127 /wd4244 /wd4267 /bigobj)
   # Generate a shim header in the build directory to undefine Windows macros that conflict with Thrift generated code
   file(WRITE "${THRIFT_OUT_DIR}/thrift_msvc_shim.h"
       "#pragma once\n"
