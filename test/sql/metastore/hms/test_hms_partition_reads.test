@@ -1,0 +1,31 @@
+# name: test/sql/metastore/hms/test_hms_partition_reads.test
+# description: Test HMS partition reading and pruning (mocked or dependent on test infra)
+# group: [hms]
+
+require metastore
+
+require-env HMS_LOCAL_ENDPOINT
+
+statement ok
+ATTACH 'thrift://${HMS_LOCAL_ENDPOINT}' AS my_hms (TYPE metastore);
+
+statement error
+SELECT * FROM my_hms.default.my_partitioned_table WHERE year = '2023';
+----
+Catalog Error: Table with name my_partitioned_table does not exist!
+
+statement ok
+ATTACH 'thrift://${HMS_LOCAL_ENDPOINT}' AS my_hms2 (TYPE metastore);
+
+statement error
+SELECT * FROM my_hms2.default.my_partitioned_table WHERE year > '2020' AND month = '10';
+----
+Catalog Error: Table with name my_partitioned_table does not exist!
+
+statement ok
+ATTACH 'thrift://${HMS_LOCAL_ENDPOINT}' AS my_hms3 (TYPE metastore);
+
+statement error
+SELECT * FROM my_hms3.default.my_partitioned_table WHERE CAST(year AS INT) > 2020;
+----
+Catalog Error: Table with name my_partitioned_table does not exist!

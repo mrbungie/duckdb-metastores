@@ -79,8 +79,7 @@ void TestMapperBehavior() {
 	unknown_sd.serde_class = "com.example.UnknownSerde";
 	auto unknown_result = HmsMapper::MapTable("main", "db", "unknown_tbl", std::move(unknown_sd), {}, {});
 	Assert(!unknown_result.IsOk(), "unknown serde should fail");
-	Assert(unknown_result.error.code == MetastoreErrorCode::Unsupported,
-	       "unknown serde must return Unsupported");
+	Assert(unknown_result.error.code == MetastoreErrorCode::Unsupported, "unknown serde must return Unsupported");
 	Assert(unknown_result.error.retryable == false, "unknown serde must be non-retryable");
 }
 
@@ -113,7 +112,7 @@ void TestConnectorStubContract() {
 	Assert(ns_result.error.retryable, "stub error should be retryable");
 }
 
-}
+} // namespace
 
 int main() {
 	TestEndpointParsing();

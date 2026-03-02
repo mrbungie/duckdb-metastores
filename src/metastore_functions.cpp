@@ -1,9 +1,9 @@
-#include "metastore_functions.hpp"
-#include "metastore_runtime.hpp"
-#include "metastore_connector.hpp"
-#include "hms/hms_config.hpp"
-#include "hms/hms_connector.hpp"
-#include "duckdb.hpp"
+#include "main/metastore_functions.hpp"
+#include "main/metastore_runtime.hpp"
+#include "providers/hms/hms_connector.hpp"
+#include "providers/hms/hms_config.hpp"
+#include "main/metastore_connector.hpp"
+#include "auth/metastore_secret_bridge.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/common/exception.hpp"
 
@@ -28,9 +28,8 @@ struct MetastoreScanBindData : public FunctionData {
 	}
 };
 
-static unique_ptr<FunctionData> MetastoreScanBind(
-		ClientContext &context, TableFunctionBindInput &input,
-		vector<LogicalType> &return_types, vector<string> &names) {
+static unique_ptr<FunctionData> MetastoreScanBind(ClientContext &context, TableFunctionBindInput &input,
+                                                  vector<LogicalType> &return_types, vector<string> &names) {
 
 	// Validate argument count (3 required: catalog, schema, table_name)
 	if (input.inputs.size() < 3) {
@@ -50,20 +49,14 @@ static unique_ptr<FunctionData> MetastoreScanBind(
 
 	// Set return schema: 5 VARCHAR columns
 	return_types = {
-		LogicalType::VARCHAR,  // table_catalog
-		LogicalType::VARCHAR,  // table_schema
-		LogicalType::VARCHAR,  // table_name
-		LogicalType::VARCHAR,  // location
-		LogicalType::VARCHAR   // format
+	    LogicalType::VARCHAR, // table_catalog
+	    LogicalType::VARCHAR, // table_schema
+	    LogicalType::VARCHAR, // table_name
+	    LogicalType::VARCHAR, // location
+	    LogicalType::VARCHAR  // format
 	};
 
-	names = {
-		"table_catalog",
-		"table_schema",
-		"table_name",
-		"location",
-		"format"
-	};
+	names = {"table_catalog", "table_schema", "table_name", "location", "format"};
 
 	auto bind_data = make_uniq<MetastoreScanBindData>();
 	bind_data->catalog = input.inputs[0].GetValue<string>();
@@ -78,13 +71,12 @@ struct MetastoreScanGlobalState : public GlobalTableFunctionState {
 };
 
 // Initialize global state
-static unique_ptr<GlobalTableFunctionState> MetastoreScanInitGlobal(
-		ClientContext &context, TableFunctionInitInput &input) {
+static unique_ptr<GlobalTableFunctionState> MetastoreScanInitGlobal(ClientContext &context,
+                                                                    TableFunctionInitInput &input) {
 	return make_uniq<MetastoreScanGlobalState>();
 }
 
-static void MetastoreScanExecute(
-		ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+static void MetastoreScanExecute(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &gstate = data.global_state->Cast<MetastoreScanGlobalState>();
 
 	if (gstate.finished) {
@@ -117,13 +109,10 @@ static void MetastoreScanExecute(
 void RegisterMetastoreFunctions(ExtensionLoader &loader) {
 	// Register metastore_scan table function
 	// Signature: metastore_scan(catalog VARCHAR, schema VARCHAR, table_name VARCHAR)
-	loader.RegisterFunction(TableFunction(
-			"metastore_scan",
-			{LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
-			MetastoreScanExecute,
-			MetastoreScanBind,
-			MetastoreScanInitGlobal
-	));
+	loader.RegisterFunction(GetMetastoreReadFunction());
+	loader.RegisterFunction(TableFunction("metastore_scan",
+	                                      {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
+	                                      MetastoreScanExecute, MetastoreScanBind, MetastoreScanInitGlobal));
 }
 
 } // namespace duckdb

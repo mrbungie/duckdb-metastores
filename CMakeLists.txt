@@ -15,16 +15,20 @@ project(${TARGET_NAME})
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-include_directories(src/include src src/providers)
 
-set(EXTENSION_SOURCES src/metastore_extension.cpp src/metastore_functions.cpp src/metastore_runtime.cpp src/auth/metastore_secret_bridge.cpp src/planner/metastore_planner.cpp src/providers/hms/hms_connector.cpp src/providers/hms/hms_mapper.cpp)
+add_subdirectory(third_party/thrift)
+add_subdirectory(src)
+
+set(EXTENSION_SOURCES ${ALL_OBJECT_FILES})
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
-# Link OpenSSL in both the static library as the loadable extension
-target_link_libraries(${EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto)
-target_link_libraries(${LOADABLE_EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto)
+# Link OpenSSL and Thrift in both the static library as the loadable extension
+target_link_libraries(${EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto thrift::thrift)
+target_link_libraries(${LOADABLE_EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto thrift::thrift)
+target_include_directories(${EXTENSION_NAME} PRIVATE thrift::thrift)
+target_include_directories(${LOADABLE_EXTENSION_NAME} PRIVATE thrift::thrift)
 
 install(
   TARGETS ${EXTENSION_NAME}
