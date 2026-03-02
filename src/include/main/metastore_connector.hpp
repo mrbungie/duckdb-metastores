@@ -71,8 +71,7 @@ struct MetastoreResult {
 // IMetastoreConnector — abstract interface for metastore backends
 //
 // All metastore providers (HMS, Glue, Dataproc, etc.) implement this
-// interface. The C++ side consumes it; the Rust side produces it through
-// the FFI bridge in bridge_ffi.cpp / metastore_ffi.h.
+// interface.
 //===--------------------------------------------------------------------===//
 class IMetastoreConnector {
 public:
