@@ -50,7 +50,7 @@ struct MetastoreStorageDescriptor {
 
 struct MetastorePartitionColumn {
 	std::string name;
-	//! Type string as reported by the metastore (e.g. "string", "int", "date")
+	//! Type std::string as reported by the metastore (e.g. "std::string", "int", "date")
 	std::string type;
 };
 
@@ -97,6 +97,45 @@ struct MetastoreTable {
 	bool IsPartitioned() const {
 		return partition_spec.IsPartitioned();
 	}
+};
+
+struct ParsedUri {
+	std::string scheme;
+	std::string authority;
+	std::string path;
+	std::string query;
+	std::string fragment;
+
+	static ParsedUri Parse(const std::string &uri);
+};
+
+enum class MetastoreProviderType : uint8_t { HMS = 0, Glue = 1, Dataproc = 2, Unknown = 255 };
+
+inline const char *MetastoreProviderTypeToString(MetastoreProviderType type) {
+	switch (type) {
+	case MetastoreProviderType::HMS:
+		return "HMS";
+	case MetastoreProviderType::Glue:
+		return "Glue";
+	case MetastoreProviderType::Dataproc:
+		return "Dataproc";
+	case MetastoreProviderType::Unknown:
+	default:
+		return "Unknown";
+	}
+}
+
+struct MetastoreCatalogConfig {
+	//! Which provider backend to use
+	MetastoreProviderType provider = MetastoreProviderType::Unknown;
+	//! Metastore endpoint URI (e.g. "thrift://hms-host:9083" for HMS)
+	std::string endpoint;
+	//! Cloud region (required for Glue/Dataproc, std::optional for HMS)
+	std::optional<std::string> region;
+	//! Auth strategy class name (e.g. "StaticKeys", "Chain", "AssumeRole")
+	std::string auth_strategy_class;
+	//! Extensible key-value map for provider-specific parameters
+	std::unordered_map<std::string, std::string> extra_params;
 };
 
 } // namespace duckdb

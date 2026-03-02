@@ -1,6 +1,6 @@
 #pragma once
 
-#include "main/metastore_connector.hpp"
+#include "core/connector/metastore_connector.hpp"
 #include "duckdb.hpp"
 #include <stdexcept>
 #include <string>

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "main/metastore_types.hpp"
+#include "core/models/metastore_types.hpp"
 
 #include <memory>
 #include <string>
@@ -89,7 +89,7 @@ public:
 
 	//! List partition values for a partitioned table.
 	//! @param predicate  Optional filter expression to push down to the metastore.
-	//!                   Empty string means "all partitions".
+	//!                   Empty std::string means "all partitions".
 	virtual MetastoreResult<std::vector<MetastorePartitionValue>> ListPartitions(const std::string &namespace_name,
 	                                                                             const std::string &table_name,
 	                                                                             const std::string &predicate = "") = 0;
@@ -101,6 +101,14 @@ public:
 		return MetastoreResult<MetastoreTableProperties>::Error(MetastoreErrorCode::Unsupported,
 		                                                        "GetTableStats not supported by this connector");
 	}
+};
+
+class IConnectorFactory {
+public:
+	virtual ~IConnectorFactory() = default;
+	virtual MetastoreCatalogConfig NormalizeConfig(const std::string &catalog_name, const ParsedUri &uri,
+	                                               const case_insensitive_map_t<Value> &options) = 0;
+	virtual duckdb::unique_ptr<IMetastoreConnector> CreateConnector(const MetastoreCatalogConfig &config) = 0;
 };
 
 } // namespace duckdb

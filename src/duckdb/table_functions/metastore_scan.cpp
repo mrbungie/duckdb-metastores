@@ -1,21 +1,20 @@
-#include "main/metastore_functions.hpp"
-#include "main/metastore_runtime.hpp"
-#include "providers/hms/hms_connector.hpp"
-#include "providers/hms/hms_config.hpp"
-#include "main/metastore_connector.hpp"
-#include "auth/metastore_secret_bridge.hpp"
+#include "duckdb/table_functions/metastore_functions.hpp"
+#include "runtime/metastore_runtime.hpp"
+#include "core/connector/metastore_connector.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/main/extension/extension_loader.hpp"
 
 namespace duckdb {
 
-struct MetastoreScanBindData : public FunctionData {
-	std::string catalog;
-	std::string schema;
-	std::string table_name;
+struct MetastoreScanBindData : public TableFunctionData {
+	string catalog;
+	string schema;
+	string table_name;
 
-	unique_ptr<FunctionData> Copy() const override {
-		auto copy = make_uniq<MetastoreScanBindData>();
+	duckdb::unique_ptr<FunctionData> Copy() const override {
+		auto copy = duckdb::make_uniq<MetastoreScanBindData>();
 		copy->catalog = catalog;
 		copy->schema = schema;
 		copy->table_name = table_name;
@@ -28,8 +27,8 @@ struct MetastoreScanBindData : public FunctionData {
 	}
 };
 
-static unique_ptr<FunctionData> MetastoreScanBind(ClientContext &context, TableFunctionBindInput &input,
-                                                  vector<LogicalType> &return_types, vector<string> &names) {
+static duckdb::unique_ptr<FunctionData> MetastoreScanBind(ClientContext &context, TableFunctionBindInput &input,
+                                                          vector<LogicalType> &return_types, vector<string> &names) {
 
 	// Validate argument count (3 required: catalog, schema, table_name)
 	if (input.inputs.size() < 3) {
@@ -41,9 +40,9 @@ static unique_ptr<FunctionData> MetastoreScanBind(ClientContext &context, TableF
 		if (input.inputs[i].IsNull()) {
 			throw InvalidInputException("Argument " + to_string(i) + " cannot be NULL");
 		}
-		string arg_val = input.inputs[i].GetValue<string>();
+		std::string arg_val = input.inputs[i].GetValue<std::string>();
 		if (arg_val.empty()) {
-			throw InvalidInputException("Argument " + to_string(i) + " cannot be empty");
+			throw InvalidInputException("Argument " + to_string(i) + " cannot be empty std::string");
 		}
 	}
 
@@ -58,10 +57,10 @@ static unique_ptr<FunctionData> MetastoreScanBind(ClientContext &context, TableF
 
 	names = {"table_catalog", "table_schema", "table_name", "location", "format"};
 
-	auto bind_data = make_uniq<MetastoreScanBindData>();
-	bind_data->catalog = input.inputs[0].GetValue<string>();
-	bind_data->schema = input.inputs[1].GetValue<string>();
-	bind_data->table_name = input.inputs[2].GetValue<string>();
+	auto bind_data = duckdb::make_uniq<MetastoreScanBindData>();
+	bind_data->catalog = input.inputs[0].GetValue<std::string>();
+	bind_data->schema = input.inputs[1].GetValue<std::string>();
+	bind_data->table_name = input.inputs[2].GetValue<std::string>();
 	return std::move(bind_data);
 }
 
@@ -71,9 +70,9 @@ struct MetastoreScanGlobalState : public GlobalTableFunctionState {
 };
 
 // Initialize global state
-static unique_ptr<GlobalTableFunctionState> MetastoreScanInitGlobal(ClientContext &context,
-                                                                    TableFunctionInitInput &input) {
-	return make_uniq<MetastoreScanGlobalState>();
+static duckdb::unique_ptr<GlobalTableFunctionState> MetastoreScanInitGlobal(ClientContext &context,
+                                                                            TableFunctionInitInput &input) {
+	return duckdb::make_uniq<MetastoreScanGlobalState>();
 }
 
 static void MetastoreScanExecute(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
@@ -88,11 +87,14 @@ static void MetastoreScanExecute(ClientContext &context, TableFunctionInput &dat
 	if (!config_opt.has_value()) {
 		throw InvalidInputException("Catalog is not attached as metastore: " + bind_data.catalog);
 	}
-	if (config_opt->provider != MetastoreProviderType::HMS) {
-		throw InvalidInputException("Only HMS provider is supported in this build");
+
+	auto factory = ProviderRegistry::GetFactory(StringUtil::Lower(MetastoreProviderTypeToString(config_opt->provider)));
+	if (!factory) {
+		throw InvalidInputException(std::string("Provider factory not found for type: ") +
+		                            MetastoreProviderTypeToString(config_opt->provider));
 	}
-	auto hms_config = ParseHmsEndpoint(config_opt->endpoint);
-	std::unique_ptr<IMetastoreConnector> connector = make_uniq<HmsConnector>(std::move(hms_config));
+
+	duckdb::unique_ptr<IMetastoreConnector> connector = factory->CreateConnector(*config_opt);
 	auto table_result = connector->GetTable(bind_data.schema, bind_data.table_name);
 	if (!table_result.IsOk()) {
 		throw InvalidInputException(table_result.error.message);
@@ -107,12 +109,10 @@ static void MetastoreScanExecute(ClientContext &context, TableFunctionInput &dat
 }
 
 void RegisterMetastoreFunctions(ExtensionLoader &loader) {
-	// Register metastore_scan table function
-	// Signature: metastore_scan(catalog VARCHAR, schema VARCHAR, table_name VARCHAR)
+	TableFunction scan_func("metastore_scan", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
+	                        MetastoreScanExecute, MetastoreScanBind, MetastoreScanInitGlobal);
+	loader.RegisterFunction(scan_func);
 	loader.RegisterFunction(GetMetastoreReadFunction());
-	loader.RegisterFunction(TableFunction("metastore_scan",
-	                                      {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
-	                                      MetastoreScanExecute, MetastoreScanBind, MetastoreScanInitGlobal));
 }
 
 } // namespace duckdb

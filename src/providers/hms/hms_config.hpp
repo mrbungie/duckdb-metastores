@@ -1,6 +1,6 @@
 #pragma once
 
-#include "main/metastore_errors.hpp"
+#include "duckdb.hpp"
 
 #include <cstdint>
 #include <string>

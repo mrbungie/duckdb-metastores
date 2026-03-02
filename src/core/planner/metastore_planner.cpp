@@ -1,4 +1,4 @@
-#include "planner/metastore_planner.hpp"
+#include "core/planner/metastore_planner.hpp"
 #include "duckdb/planner/table_filter.hpp"
 #include "duckdb/planner/filter/conjunction_filter.hpp"
 #include "duckdb/planner/filter/constant_filter.hpp"
@@ -120,7 +120,7 @@ static std::string FilterToPredicate(const std::string &col_name, const TableFil
 }
 
 std::string MetastorePlanner::GeneratePartitionPredicate(const MetastoreTable &table, const TableFilterSet &filter_set,
-                                                         const vector<ColumnIndex> &column_ids,
+                                                         const std::vector<ColumnIndex> &column_ids,
                                                          const std::vector<std::string> &names) {
 	if (!CanPrunePartitions(table)) {
 		return "";

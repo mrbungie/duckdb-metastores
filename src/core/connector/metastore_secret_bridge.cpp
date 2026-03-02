@@ -1,4 +1,4 @@
-#include "auth/metastore_secret_bridge.hpp"
+#include "core/connector/metastore_secret_bridge.hpp"
 #include "duckdb/common/string_util.hpp"
 
 namespace duckdb {
@@ -8,7 +8,7 @@ static std::string GetOptionString(const case_insensitive_map_t<Value> &options,
 	if (it == options.end()) {
 		return "";
 	}
-	return StringValue::Get(it->second);
+	return it->second.ToString();
 }
 
 MetastoreProviderType InferProviderType(const std::string &provider_str) {
@@ -32,7 +32,7 @@ static std::optional<std::string> ExtractGlueRegionFromArn(const std::string &en
 	if (lower.find("arn:aws:glue:") != 0) {
 		return std::optional<std::string>();
 	}
-	auto parts = StringUtil::Split(endpoint, ':');
+	auto parts = StringUtil::Split(endpoint, ":");
 	if (parts.size() < 6) {
 		return std::optional<std::string>();
 	}
@@ -42,7 +42,7 @@ static std::optional<std::string> ExtractGlueRegionFromArn(const std::string &en
 	return parts[3];
 }
 
-static void ValidateHMS(const MetastoreConnectorConfig &config) {
+static void ValidateHMS(const MetastoreCatalogConfig &config) {
 	if (config.endpoint.empty()) {
 		throw_metastore_error(MetastoreErrorCode::InvalidConfig,
 		                      MetastoreErrorTag {"hms", "ResolveConnectorConfig", false},
@@ -51,7 +51,7 @@ static void ValidateHMS(const MetastoreConnectorConfig &config) {
 	}
 }
 
-static void ValidateGlue(const MetastoreConnectorConfig &config) {
+static void ValidateGlue(const MetastoreCatalogConfig &config) {
 	if (!config.region.has_value() || config.region->empty()) {
 		throw_metastore_error(MetastoreErrorCode::InvalidConfig,
 		                      MetastoreErrorTag {"glue", "ResolveConnectorConfig", false},
@@ -61,7 +61,7 @@ static void ValidateGlue(const MetastoreConnectorConfig &config) {
 	}
 }
 
-static void ValidateDataproc(const MetastoreConnectorConfig &config) {
+static void ValidateDataproc(const MetastoreCatalogConfig &config) {
 	if (config.endpoint.empty()) {
 		throw_metastore_error(
 		    MetastoreErrorCode::InvalidConfig, MetastoreErrorTag {"dataproc", "ResolveConnectorConfig", false},
@@ -108,25 +108,20 @@ static std::string NormalizeEndpointScheme(const std::string &endpoint) {
 	return endpoint;
 }
 
-static void ResolveSecret(const case_insensitive_map_t<Value> &options, MetastoreConnectorConfig &config) {
+static void ResolveSecret(const case_insensitive_map_t<Value> &options, MetastoreCatalogConfig &config) {
 	auto secret_name = GetOptionString(options, "SECRET");
 	if (secret_name.empty()) {
 		return;
 	}
 	// TODO(metastore): Resolve credentials via DuckDB SecretManager.
-	// The DuckDB submodule is not initialized, so we cannot link against
-	// SecretManager yet. When available, use:
-	//   auto &secret_manager = SecretManager::Get(context);
-	//   auto secret = secret_manager.GetSecretByName(transaction, secret_name);
-	// Then extract key-value pairs from the secret into config.extra_params.
 	config.extra_params["secret_name"] = secret_name;
 }
 
-MetastoreConnectorConfig ResolveConnectorConfig(const case_insensitive_map_t<Value> &options) {
+MetastoreCatalogConfig ResolveConnectorConfig(const case_insensitive_map_t<Value> &options) {
 	auto type_str = GetOptionString(options, "TYPE");
 	auto endpoint_str = GetOptionString(options, "ENDPOINT");
 
-	MetastoreConnectorConfig config;
+	MetastoreCatalogConfig config;
 
 	// TYPE parameter must be 'metastore'
 	if (type_str.empty()) {

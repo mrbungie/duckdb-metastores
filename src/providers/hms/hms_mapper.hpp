@@ -1,8 +1,7 @@
 #pragma once
 
-#include "providers/hms/hms_config.hpp"
-#include "main/metastore_connector.hpp"
-#include "main/metastore_types.hpp"
+#include "core/connector/metastore_connector.hpp"
+#include "core/models/metastore_types.hpp"
 
 #include <string>
 
