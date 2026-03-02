@@ -1,7 +1,7 @@
 #include "providers/hms/hms_connector.hpp"
 #include "providers/hms/hms_mapper.hpp"
 #ifdef _WIN32
-#include <thrift_msvc_shim.h>
+#include "thrift_msvc_shim.h"
 #endif
 #include "ThriftHiveMetastore.h"
 

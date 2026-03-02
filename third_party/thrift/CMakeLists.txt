@@ -87,7 +87,7 @@ if(MSVC)
       "#undef USER\n"
       "#undef ROLE\n"
   )
-  target_compile_options(hms_thrift_lib PRIVATE /FI"${THRIFT_OUT_DIR}/thrift_msvc_shim.h")
+  target_compile_options(hms_thrift_lib PRIVATE "/FIthrift_msvc_shim.h")
 else()
   target_compile_options(hms_thrift_lib PRIVATE -Wno-unused-parameter -Wno-missing-field-initializers)
 endif()
