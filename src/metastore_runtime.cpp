@@ -1,4 +1,4 @@
-#include "metastore_runtime.hpp"
+#include "main/metastore_runtime.hpp"
 
 #include "duckdb/common/string_util.hpp"
 
@@ -9,7 +9,9 @@
 
 namespace duckdb {
 
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static std::mutex runtime_mutex;
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static std::unordered_map<std::string, MetastoreConnectorConfig> runtime_configs;
 
 void RegisterMetastoreAttachConfig(const std::string &catalog_name, MetastoreConnectorConfig config) {
@@ -26,4 +28,4 @@ std::optional<MetastoreConnectorConfig> LookupMetastoreAttachConfig(const std::s
 	return it->second;
 }
 
-}
+} // namespace duckdb

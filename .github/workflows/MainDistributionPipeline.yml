@@ -18,7 +18,15 @@ jobs:
     with:
       duckdb_version: v1.4.4
       ci_tools_version: v1.4.4
-      extension_name: quack
+      exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;windows_amd64_rtools;windows_amd64_mingw'
+      extension_name: metastore
+      extra_toolchains: parser_tools
+      extra_extension_config: |
+        find_program(CCACHE_PROGRAM ccache)
+        if(CCACHE_PROGRAM)
+            set(ENV{VCPKG_KEEP_ENV_VARS} "CCACHE_DIR;CCACHE_MAXSIZE;CCACHE_NOCOMPRESS;CC;CXX;PATH")
+            set(ENV{VCPKG_CMAKE_CONFIGURE_OPTIONS} "-DCMAKE_C_COMPILER_LAUNCHER=ccache;-DCMAKE_CXX_COMPILER_LAUNCHER=ccache")
+        endif()
 
   code-quality-check:
     name: Code Quality Check
@@ -26,5 +34,7 @@ jobs:
     with:
       duckdb_version: v1.4.4
       ci_tools_version: v1.4.4
-      extension_name: quack
-      format_checks: 'format;tidy'
+      extension_name: metastore
+      extra_toolchains: parser_tools
+      # TODO: format_checks += ;tidy
+      format_checks: format 

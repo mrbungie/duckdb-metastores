@@ -1,14 +1,12 @@
 #define DUCKDB_EXTENSION_MAIN
 
 #include "metastore_extension.hpp"
-#include "metastore_errors.hpp"
-#include "metastore_functions.hpp"
-#include "metastore_runtime.hpp"
-#include "metastore_connector.hpp"
+#include "main/metastore_functions.hpp"
+#include "main/metastore_runtime.hpp"
+#include "main/metastore_connector.hpp"
 #include "auth/metastore_secret_bridge.hpp"
-#include "hms/hms_config.hpp"
-#include "hms/hms_connector.hpp"
-#include "duckdb.hpp"
+#include "providers/hms/hms_connector.hpp"
+#include "providers/hms/hms_config.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -75,9 +73,9 @@ static string MapHiveTypeToDuckDB(const string &hive_type) {
 }
 
 static void AddNamedConstant(vector<unique_ptr<ParsedExpression>> &arguments, const string &name, Value value) {
-	auto named_arg = make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL,
-	                                                 make_uniq<ColumnRefExpression>(name),
-	                                                 make_uniq<ConstantExpression>(std::move(value)));
+	auto named_arg =
+	    make_uniq<ComparisonExpression>(ExpressionType::COMPARE_EQUAL, make_uniq<ColumnRefExpression>(name),
+	                                    make_uniq<ConstantExpression>(std::move(value)));
 	arguments.push_back(std::move(named_arg));
 }
 
@@ -132,6 +130,17 @@ static unique_ptr<TableRef> MetastoreReplacementScan(ClientContext &context, Rep
 		return nullptr;
 	}
 	string scan_function;
+	if (table_result.value.IsPartitioned()) {
+		auto table_function = make_uniq<TableFunctionRef>();
+		vector<unique_ptr<ParsedExpression>> arguments;
+		arguments.push_back(make_uniq<ConstantExpression>(Value(input.catalog_name)));
+		arguments.push_back(make_uniq<ConstantExpression>(Value(input.schema_name)));
+		arguments.push_back(make_uniq<ConstantExpression>(Value(input.table_name)));
+		table_function->function = make_uniq<FunctionExpression>("metastore_read", std::move(arguments));
+		table_function->alias = input.table_name;
+		return std::move(table_function);
+	}
+
 	switch (table_result.value.storage_descriptor.format) {
 	case MetastoreFormat::CSV:
 		scan_function = "read_csv_auto";
@@ -145,8 +154,8 @@ static unique_ptr<TableRef> MetastoreReplacementScan(ClientContext &context, Rep
 	}
 	auto table_function = make_uniq<TableFunctionRef>();
 	vector<unique_ptr<ParsedExpression>> arguments;
-	arguments.push_back(make_uniq<ConstantExpression>(
-	    Value(BuildScanPath(table_result.value.storage_descriptor.location, table_result.value.storage_descriptor.format))));
+	arguments.push_back(make_uniq<ConstantExpression>(Value(
+	    BuildScanPath(table_result.value.storage_descriptor.location, table_result.value.storage_descriptor.format))));
 	if (table_result.value.storage_descriptor.format == MetastoreFormat::CSV) {
 		AddNamedConstant(arguments, "header", Value::BOOLEAN(false));
 		auto serde_it = table_result.value.storage_descriptor.serde_parameters.find("field.delim");
@@ -171,14 +180,14 @@ static unique_ptr<TableRef> MetastoreReplacementScan(ClientContext &context, Rep
 }
 
 static unique_ptr<Catalog> MetastoreAttach(optional_ptr<StorageExtensionInfo> storage_info, ClientContext &context,
-	                                        AttachedDatabase &db, const string &name, AttachInfo &info,
-	                                        AttachOptions &attach_options) {
+                                           AttachedDatabase &db, const string &name, AttachInfo &info,
+                                           AttachOptions &attach_options) {
 	case_insensitive_map_t<Value> attach_kv;
 	for (auto &entry : info.options) {
 		attach_kv[entry.first] = entry.second;
 	}
-	if (attach_kv.find("PROVIDER") == attach_kv.end() && !info.path.empty() && info.path != ":memory:") {
-		attach_kv["PROVIDER"] = Value("hms");
+	// The URL/endpoint comes from the ATTACH path
+	if (!info.path.empty() && info.path != ":memory:") {
 		attach_kv["ENDPOINT"] = Value(info.path);
 	}
 	auto connector_config = ResolveConnectorConfig(attach_kv);
@@ -192,9 +201,8 @@ static unique_ptr<Catalog> MetastoreAttach(optional_ptr<StorageExtensionInfo> st
 	return std::move(catalog);
 }
 
-static unique_ptr<TransactionManager>
-MetastoreCreateTransactionManager(optional_ptr<StorageExtensionInfo> storage_info, AttachedDatabase &db,
-	                              Catalog &catalog) {
+static unique_ptr<TransactionManager> MetastoreCreateTransactionManager(optional_ptr<StorageExtensionInfo> storage_info,
+                                                                        AttachedDatabase &db, Catalog &catalog) {
 	return make_uniq<DuckTransactionManager>(db);
 }
 

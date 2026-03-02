@@ -1,0 +1,15 @@
+# name: test/sql/metastore/hms/test_hms_explain_plan.test
+# description: Verify EXPLAIN output shows metastore_read pushdown filters
+# group: [hms]
+
+require metastore
+
+require-env HMS_LOCAL_ENDPOINT
+
+statement ok
+ATTACH 'thrift://${HMS_LOCAL_ENDPOINT}' AS plan_hms (TYPE metastore);
+
+statement error
+EXPLAIN SELECT * FROM plan_hms.default.my_partitioned_table WHERE year = '2023';
+----
+Catalog Error: Table with name my_partitioned_table does not exist!

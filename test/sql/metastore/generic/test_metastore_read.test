@@ -1,0 +1,21 @@
+# name: test/sql/metastore/generic/test_metastore_read.test
+# description: Test partition pruning and metastore_read directly
+# group: [generic]
+
+require metastore
+
+# Ensure missing catalog fails explicitly
+statement error
+SELECT * FROM metastore_read('missing_cat', 'db', 'table')
+----
+Metastore catalog missing_cat not found or unsupported
+
+# Test that empty string fails in metastore_scan
+statement error
+SELECT * FROM metastore_scan('', 'db', 'table')
+----
+
+# Test that NULL fails in metastore_scan
+statement error
+SELECT * FROM metastore_scan(NULL, 'db', 'table')
+----

@@ -1,4 +1,5 @@
-#include "hms/hms_mapper.hpp"
+#include "providers/hms/hms_mapper.hpp"
+#include <string>
 
 #include <algorithm>
 #include <cctype>
@@ -32,6 +33,9 @@ MetastoreFormat DetectFromPattern(const std::optional<std::string> &field) {
 	if (ContainsAny(lower, {"mapredparquetinputformat", "parquet"})) {
 		return MetastoreFormat::Parquet;
 	}
+	if (ContainsAny(lower, {"jsoninputformat", "json"})) {
+		return MetastoreFormat::JSON;
+	}
 	if (ContainsAny(lower, {"orcinputformat", "orc"})) {
 		return MetastoreFormat::ORC;
 	}
@@ -48,6 +52,9 @@ MetastoreFormat DetectFromSerde(const std::optional<std::string> &field) {
 	auto lower = ToLower(*field);
 	if (ContainsAny(lower, {"parquethiveserde", "parquet"})) {
 		return MetastoreFormat::Parquet;
+	}
+	if (ContainsAny(lower, {"jsonserde", "json"})) {
+		return MetastoreFormat::JSON;
 	}
 	if (ContainsAny(lower, {"orcserde", "orc"})) {
 		return MetastoreFormat::ORC;
@@ -79,12 +86,12 @@ MetastoreFormat HmsMapper::DetectFormat(const MetastoreStorageDescriptor &sd) {
 }
 
 MetastoreResult<MetastoreTable> HmsMapper::MapTable(const std::string &catalog, const std::string &namespace_name,
-	                                                 const std::string &table_name, MetastoreStorageDescriptor sd,
-	                                                 MetastorePartitionSpec partition_spec,
-	                                                 MetastoreTableProperties properties) {
+                                                    const std::string &table_name, MetastoreStorageDescriptor sd,
+                                                    MetastorePartitionSpec partition_spec,
+                                                    MetastoreTableProperties properties) {
 	if (sd.location.empty()) {
-		return MetastoreResult<MetastoreTable>::Error(MetastoreErrorCode::InvalidConfig, "HMS table location is missing",
-		                                             table_name, false);
+		return MetastoreResult<MetastoreTable>::Error(MetastoreErrorCode::InvalidConfig,
+		                                              "HMS table location is missing", table_name, false);
 	}
 
 	sd.format = DetectFormat(sd);

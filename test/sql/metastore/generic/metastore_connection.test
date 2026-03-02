@@ -1,0 +1,24 @@
+# name: test/sql/metastore/generic/metastore_connection.test
+# description: verify metastore connection and registration parameters via ATTACH
+# group: [generic]
+
+require metastore
+
+# ---- Missing TYPE option ----
+statement error
+ATTACH 'thrift://localhost:9083' AS ms;
+----
+IO Error: Cannot open file "thrift://localhost:9083"
+
+# ---- HMS: thrift+http(s) endpoint is accepted ----
+statement ok
+ATTACH 'thrift+http://localhost:9083' AS ms2 (TYPE metastore);
+
+statement ok
+DETACH ms2;
+
+# ---- Glue: REGION inferred from ARN ----
+statement error
+ATTACH 'arn:aws:glue:us-east-1:123456789012:catalog' AS ms3 (TYPE metastore);
+----
+Only HMS provider is supported in this build
