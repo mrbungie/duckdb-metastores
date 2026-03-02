@@ -74,6 +74,12 @@ if(MSVC)
   # Generate a shim header in the build directory to undefine Windows macros that conflict with Thrift generated code
   file(WRITE "${THRIFT_OUT_DIR}/thrift_msvc_shim.h"
       "#pragma once\n"
+      "#ifndef WIN32_LEAN_AND_MEAN\n"
+      "#define WIN32_LEAN_AND_MEAN\n"
+      "#endif\n"
+      "#ifndef NOMINMAX\n"
+      "#define NOMINMAX\n"
+      "#endif\n"
       "#include <winsock2.h>\n"
       "#include <windows.h>\n"
       "#undef constant\n"
