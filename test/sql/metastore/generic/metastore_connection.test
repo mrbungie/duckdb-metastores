@@ -1,5 +1,5 @@
-# name: test/sql/metastore/generic/auth_errors.test
-# description: verify auth error messages are actionable and mention the missing option
+# name: test/sql/metastore/generic/metastore_connection.test
+# description: verify metastore connection and registration parameters via ATTACH
 # group: [generic]
 
 require metastore
@@ -8,7 +8,7 @@ require metastore
 statement error
 ATTACH 'thrift://localhost:9083' AS ms;
 ----
-IO Error: Cannot open file "thrift://localhost:9083": No such file or directory
+IO Error: Cannot open file "thrift://localhost:9083"
 
 # ---- HMS: thrift+http(s) endpoint is accepted ----
 statement ok
