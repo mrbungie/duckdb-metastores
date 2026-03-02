@@ -256,13 +256,16 @@ duckdb::unique_ptr<FunctionData> MetastoreReadBind(ClientContext &context, Table
 
 	auto config_opt = LookupMetastoreAttachConfig(catalog);
 	if (!config_opt.has_value()) {
-		throw BinderException("Metastore catalog %s not found", catalog);
+		throw BinderException("Metastore catalog %s not found or unsupported", catalog);
 	}
 
-	auto factory = ProviderRegistry::GetFactory(StringUtil::Lower(MetastoreProviderTypeToString(config_opt->provider)));
+	if (config_opt->provider != MetastoreProviderType::HMS) {
+        throw BinderException("Only HMS provider is supported in this build");
+    }
+    auto parsed_uri = ParsedUri::Parse(config_opt->endpoint);
+	auto factory = ProviderRegistry::ResolveProvider(parsed_uri);
 	if (!factory) {
-		throw BinderException("No factory found for provider type: %s",
-		                      MetastoreProviderTypeToString(config_opt->provider));
+		throw BinderException("No factory found for endpoint: " + config_opt->endpoint);
 	}
 
 	bind_data->connector = factory->CreateConnector(*config_opt);

@@ -2,7 +2,6 @@
 
 #include "metastore_extension.hpp"
 #include "duckdb/metastore_duckdb.hpp"
-#include "runtime/metastore_runtime.hpp"
 #include "duckdb/main/config.hpp"
 
 namespace duckdb {

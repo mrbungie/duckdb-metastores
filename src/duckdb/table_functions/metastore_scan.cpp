@@ -88,10 +88,13 @@ static void MetastoreScanExecute(ClientContext &context, TableFunctionInput &dat
 		throw InvalidInputException("Catalog is not attached as metastore: " + bind_data.catalog);
 	}
 
-	auto factory = ProviderRegistry::GetFactory(StringUtil::Lower(MetastoreProviderTypeToString(config_opt->provider)));
+if (config_opt->provider != MetastoreProviderType::HMS) {
+    throw InvalidInputException("Only HMS provider is supported in this build");
+}
+auto parsed_uri = ParsedUri::Parse(config_opt->endpoint);
+	auto factory = ProviderRegistry::ResolveProvider(parsed_uri);
 	if (!factory) {
-		throw InvalidInputException(std::string("Provider factory not found for type: ") +
-		                            MetastoreProviderTypeToString(config_opt->provider));
+		throw InvalidInputException(std::string("Provider factory not found for endpoint: ") + config_opt->endpoint);
 	}
 
 	duckdb::unique_ptr<IMetastoreConnector> connector = factory->CreateConnector(*config_opt);

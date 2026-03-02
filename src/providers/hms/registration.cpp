@@ -37,6 +37,8 @@ public:
 void RegisterHmsProvider() {
 	ProviderRegistry::Register("thrift", duckdb::make_uniq<HmsConnectorFactory>());
 	ProviderRegistry::Register("thrift+ssl", duckdb::make_uniq<HmsConnectorFactory>());
+	ProviderRegistry::Register("thrift+http", duckdb::make_uniq<HmsConnectorFactory>());
+	ProviderRegistry::Register("thrift+https", duckdb::make_uniq<HmsConnectorFactory>());
 }
 
 } // namespace duckdb

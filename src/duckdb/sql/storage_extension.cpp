@@ -6,6 +6,7 @@
 
 #include "runtime/metastore_runtime.hpp"
 #include "core/connector/metastore_connector.hpp"
+#include "core/connector/metastore_secret_bridge.hpp"
 
 namespace duckdb {
 
@@ -19,6 +20,7 @@ static duckdb::unique_ptr<Catalog> MetastoreAttach(optional_ptr<StorageExtension
 	}
 
 	std::string path = info.path;
+    attach_kv["ENDPOINT"] = Value(path);
 	if (path.empty() || path == ":memory:") {
 		auto it = attach_kv.find("ENDPOINT");
 		if (it != attach_kv.end()) {
@@ -31,13 +33,19 @@ static duckdb::unique_ptr<Catalog> MetastoreAttach(optional_ptr<StorageExtension
 	}
 
 	auto parsed_uri = ParsedUri::Parse(path);
-	auto factory = ProviderRegistry::ResolveProvider(parsed_uri);
-	if (!factory) {
-		throw InvalidInputException("No metastore provider found for URI: " + path);
-	}
-
-	auto connector_config = factory->NormalizeConfig(name, parsed_uri, attach_kv);
-	RegisterMetastoreAttachConfig(name, std::move(connector_config));
+    // Resolve configuration using the generic connector config resolver.
+    // This validates TYPE and ENDPOINT and infers the provider.
+    auto connector_config = ResolveConnectorConfig(attach_kv);
+    // This extension only supports HMS providers.
+    if (connector_config.provider != MetastoreProviderType::HMS) {
+        throw InvalidInputException("Only HMS provider is supported in this build");
+    }
+    // Resolve the appropriate factory based on the original URI scheme.
+    auto factory = ProviderRegistry::ResolveProvider(parsed_uri);
+    if (!factory) {
+        throw InvalidInputException("No metastore provider found for URI: " + path);
+    }
+    RegisterMetastoreAttachConfig(name, std::move(connector_config));
 
 	info.path = ":memory:";
 	auto catalog = duckdb::make_uniq<DuckCatalog>(db);
