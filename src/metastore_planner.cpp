@@ -1,4 +1,4 @@
-#include "core/planner/metastore_planner.hpp"
+#include "metastore_planner.hpp"
 #include "duckdb/planner/table_filter.hpp"
 #include "duckdb/planner/filter/conjunction_filter.hpp"
 #include "duckdb/planner/filter/constant_filter.hpp"

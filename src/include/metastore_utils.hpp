@@ -1,7 +1,7 @@
 #pragma once
 
 #include "duckdb.hpp"
-#include "core/models/metastore_types.hpp"
+#include "metastore_types.hpp"
 
 namespace duckdb {
 

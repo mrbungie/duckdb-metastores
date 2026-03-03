@@ -1,7 +1,7 @@
 #pragma once
 
-#include "core/models/metastore_types.hpp"
-#include "core/connector/metastore_errors.hpp"
+#include "metastore_types.hpp"
+#include "connector/metastore_errors.hpp"
 #include "duckdb.hpp"
 
 #include <optional>

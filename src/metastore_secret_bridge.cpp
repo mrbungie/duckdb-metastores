@@ -1,4 +1,4 @@
-#include "core/connector/metastore_secret_bridge.hpp"
+#include "metastore_secret_bridge.hpp"
 #include "duckdb/common/string_util.hpp"
 
 namespace duckdb {

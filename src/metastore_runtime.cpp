@@ -1,4 +1,4 @@
-#include "runtime/metastore_runtime.hpp"
+#include "metastore_runtime.hpp"
 #include "duckdb/common/string_util.hpp"
 #include <mutex>
 #include <unordered_map>

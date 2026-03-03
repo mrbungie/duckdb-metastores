@@ -1,5 +1,5 @@
 #include "providers/hms/hms_config.hpp"
-#include "core/connector/metastore_errors.hpp"
+#include "connector/metastore_errors.hpp"
 
 namespace duckdb {
 

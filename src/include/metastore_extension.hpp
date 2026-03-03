@@ -1,6 +1,11 @@
 #pragma once
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-includes"
 
-#include "duckdb.hpp"
+// IWYU pragma: keep
+#include "duckdb.hpp" // NOLINT(clangd-unused-includes)
+
+#pragma clang diagnostic pop
 
 namespace duckdb {
 

@@ -1,4 +1,4 @@
-#include "runtime/metastore_runtime.hpp"
+#include "metastore_runtime.hpp"
 #include "providers/hms/hms_connector.hpp"
 #include "providers/hms/hms_config.hpp"
 

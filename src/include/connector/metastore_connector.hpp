@@ -1,8 +1,7 @@
 #pragma once
 
-#include "core/models/metastore_types.hpp"
+#include "metastore_types.hpp"
 
-#include <memory>
 #include <string>
 #include <vector>
 

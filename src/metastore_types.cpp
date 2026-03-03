@@ -1,5 +1,4 @@
-#include "core/models/metastore_types.hpp"
-#include "duckdb/common/string_util.hpp"
+#include "metastore_types.hpp"
 
 namespace duckdb {
 

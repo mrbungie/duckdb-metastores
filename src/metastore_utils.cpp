@@ -1,4 +1,4 @@
-#include "duckdb/metastore_utils.hpp"
+#include "metastore_utils.hpp"
 #include "duckdb/common/string_util.hpp"
 
 namespace duckdb {

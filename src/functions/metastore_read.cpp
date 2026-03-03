@@ -1,7 +1,7 @@
-#include "duckdb/table_functions/metastore_functions.hpp"
-#include "runtime/metastore_runtime.hpp"
-#include "core/connector/metastore_connector.hpp"
-#include "core/planner/metastore_planner.hpp"
+#include "functions/metastore_functions.hpp"
+#include "metastore_runtime.hpp"
+#include "connector/metastore_connector.hpp"
+#include "metastore_planner.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/optimizer/filter_combiner.hpp"
@@ -11,7 +11,7 @@
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/catalog/catalog.hpp"
-#include "duckdb/metastore_utils.hpp"
+#include "metastore_utils.hpp"
 #include <filesystem>
 #include <algorithm>
 
@@ -260,9 +260,9 @@ duckdb::unique_ptr<FunctionData> MetastoreReadBind(ClientContext &context, Table
 	}
 
 	if (config_opt->provider != MetastoreProviderType::HMS) {
-        throw BinderException("Only HMS provider is supported in this build");
-    }
-    auto parsed_uri = ParsedUri::Parse(config_opt->endpoint);
+		throw BinderException("Only HMS provider is supported in this build");
+	}
+	auto parsed_uri = ParsedUri::Parse(config_opt->endpoint);
 	auto factory = ProviderRegistry::ResolveProvider(parsed_uri);
 	if (!factory) {
 		throw BinderException("No factory found for endpoint: " + config_opt->endpoint);

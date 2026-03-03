@@ -1,7 +1,7 @@
 #define DUCKDB_EXTENSION_MAIN
 
 #include "metastore_extension.hpp"
-#include "duckdb/metastore_duckdb.hpp"
+#include "metastore_duckdb.hpp"
 #include "duckdb/main/config.hpp"
 
 namespace duckdb {

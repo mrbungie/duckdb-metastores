@@ -1,6 +1,7 @@
 #pragma once
 
-#include "core/connector/metastore_connector.hpp"
+#include "metastore_types.hpp"
+#include "connector/metastore_connector.hpp"
 #include <optional>
 #include <string>
 
