@@ -5,7 +5,6 @@
 #include "duckdb/storage/storage_extension.hpp"
 
 #include "metastore_runtime.hpp"
-#include "metastore_secret_bridge.hpp"
 
 namespace duckdb {
 
@@ -32,19 +31,19 @@ static duckdb::unique_ptr<Catalog> MetastoreAttach(optional_ptr<StorageExtension
 	}
 
 	auto parsed_uri = ParsedUri::Parse(path);
-	// Resolve configuration using the generic connector config resolver.
-	// This validates TYPE and ENDPOINT and infers the provider.
-	auto connector_config = ResolveConnectorConfig(attach_kv);
-	// This extension only supports HMS providers.
-	if (connector_config.provider != MetastoreProviderType::HMS) {
-		throw InvalidInputException("Only HMS provider is supported in this build");
-	}
-	// Resolve the appropriate factory based on the original URI scheme.
 	auto factory = ProviderRegistry::ResolveProvider(parsed_uri);
 	if (!factory) {
-		throw InvalidInputException("No metastore provider found for URI: " + path);
+		throw BinderException("Invalid Error: Could not infer metastore provider from endpoint. Use thrift://, "
+		                      "thrift+http(s)://, or http(s):// for HMS, arn:aws:glue: for Glue, or "
+		                      "https://...dataproc... for Dataproc.");
 	}
+
+	auto connector_config = factory->NormalizeConfig(name, parsed_uri, attach_kv);
 	RegisterMetastoreAttachConfig(name, std::move(connector_config));
+
+	// Clear options to avoid "Unrecognized option for attach" error in downstream StorageManager
+	info.options.clear();
+	attach_options.options.clear();
 
 	info.path = ":memory:";
 	auto catalog = duckdb::make_uniq<DuckCatalog>(db);

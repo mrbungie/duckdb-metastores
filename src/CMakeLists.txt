@@ -8,6 +8,7 @@ add_library(
   metastore_replacement_scan.cpp 
   metastore_storage_extension.cpp
   metastore_utils.cpp
+  metastore_scan_plan.cpp
   functions/metastore_table_info.cpp 
   functions/metastore_read.cpp
   metastore_functions.cpp
@@ -15,6 +16,7 @@ add_library(
   providers/hms/hms_mapper.cpp
   providers/hms/hms_config.cpp
   providers/hms/hms_registration.cpp
+  providers/mock/mock_provider.cpp
 )
 
 target_link_libraries(metastore_src_lib PRIVATE hms_thrift_lib)

@@ -107,6 +107,7 @@ struct ParsedUri {
 	std::string fragment;
 
 	static ParsedUri Parse(const std::string &uri);
+	std::string ToString() const;
 };
 
 enum class MetastoreProviderType : uint8_t { HMS = 0, Glue = 1, Dataproc = 2, Unknown = 255 };
@@ -125,7 +126,15 @@ inline const char *MetastoreProviderTypeToString(MetastoreProviderType type) {
 	}
 }
 
+struct MetastoreExtraOptions {
+	std::string namespaces_table;
+	std::string tables_table;
+	std::string partitions_table;
+};
+
 struct MetastoreCatalogConfig {
+	//! The name of the catalog
+	std::string catalog_name;
 	//! Which provider backend to use
 	MetastoreProviderType provider = MetastoreProviderType::Unknown;
 	//! Metastore endpoint URI (e.g. "thrift://hms-host:9083" for HMS)
@@ -136,6 +145,10 @@ struct MetastoreCatalogConfig {
 	std::string auth_strategy_class;
 	//! Extensible key-value map for provider-specific parameters
 	std::unordered_map<std::string, std::string> extra_params;
+	//! Mock-specific table pointers or other extra configuration
+	MetastoreExtraOptions extra_options;
+	//! Original options from ATTACH
+	case_insensitive_map_t<Value> options;
 };
 
 } // namespace duckdb

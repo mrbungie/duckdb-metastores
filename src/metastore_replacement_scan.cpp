@@ -24,9 +24,6 @@ duckdb::unique_ptr<TableRef> MetastoreReplacementScan(ClientContext &context, Re
 	}
 
 	// Try to resolve the provider factory
-	if (config_opt->provider != MetastoreProviderType::HMS) {
-		return nullptr;
-	}
 	auto parsed_uri = ParsedUri::Parse(config_opt->endpoint);
 	auto factory = ProviderRegistry::ResolveProvider(parsed_uri);
 	if (!factory) {

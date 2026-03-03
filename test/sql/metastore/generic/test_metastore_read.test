@@ -8,7 +8,7 @@ require metastore
 statement error
 SELECT * FROM metastore_read('missing_cat', 'db', 'table')
 ----
-Metastore catalog missing_cat not found or unsupported
+Catalog is not attached as metastore, or not found: missing_cat
 
 # Test that empty string fails in metastore_table_info
 statement error

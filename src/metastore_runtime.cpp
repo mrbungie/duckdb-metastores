@@ -3,54 +3,83 @@
 #include "metastore_types.hpp"
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 namespace duckdb {
 
-std::mutex &get_runtime_mutex() {
-	static std::mutex mtx;
-	return mtx;
-}
+void RegisterHmsProvider();
+void RegisterMockProvider();
 
-std::unordered_map<std::string, MetastoreCatalogConfig> &get_runtime_configs() {
-	static std::unordered_map<std::string, MetastoreCatalogConfig> configs;
-	return configs;
-}
+struct MetastoreRuntimeState {
+	DatabaseInstance *db = nullptr;
+	unique_ptr<Connection> con = nullptr;
+	std::vector<unique_ptr<IConnectorFactory>> factories;
+	std::unordered_map<std::string, MetastoreCatalogConfig> configs;
+	std::mutex mtx;
+};
 
-std::unordered_map<std::string, duckdb::unique_ptr<IConnectorFactory>> &get_registry_factories() {
-	static std::unordered_map<std::string, duckdb::unique_ptr<IConnectorFactory>> factories;
-	return factories;
+static MetastoreRuntimeState &GetRuntimeState() {
+	static MetastoreRuntimeState state;
+	return state;
 }
 
 void RegisterMetastoreAttachConfig(const std::string &catalog_name, MetastoreCatalogConfig config) {
-	std::lock_guard<std::mutex> lock(get_runtime_mutex());
-	get_runtime_configs()[StringUtil::Lower(catalog_name)] = std::move(config);
+	auto &state = GetRuntimeState();
+	std::lock_guard<std::mutex> lock(state.mtx);
+	state.configs[StringUtil::Lower(catalog_name)] = std::move(config);
 }
 
 std::optional<MetastoreCatalogConfig> LookupMetastoreAttachConfig(const std::string &catalog_name) {
-	std::lock_guard<std::mutex> lock(get_runtime_mutex());
-	auto it = get_runtime_configs().find(StringUtil::Lower(catalog_name));
-	if (it == get_runtime_configs().end()) {
+	auto &state = GetRuntimeState();
+	std::lock_guard<std::mutex> lock(state.mtx);
+	auto it = state.configs.find(StringUtil::Lower(catalog_name));
+	if (it == state.configs.end()) {
 		return std::nullopt;
 	}
 	return it->second;
 }
 
-void ProviderRegistry::Register(const std::string &provider_id, duckdb::unique_ptr<IConnectorFactory> factory) {
-	std::lock_guard<std::mutex> lock(get_runtime_mutex());
-	get_registry_factories()[StringUtil::Lower(provider_id)] = std::move(factory);
-}
-
-IConnectorFactory *ProviderRegistry::GetFactory(const std::string &provider_id) {
-	std::lock_guard<std::mutex> lock(get_runtime_mutex());
-	auto it = get_registry_factories().find(StringUtil::Lower(provider_id));
-	if (it == get_registry_factories().end()) {
-		return nullptr;
-	}
-	return it->second.get();
+void ProviderRegistry::Register(duckdb::unique_ptr<IConnectorFactory> factory) {
+	auto &state = GetRuntimeState();
+	std::lock_guard<std::mutex> lock(state.mtx);
+	state.factories.push_back(std::move(factory));
 }
 
 IConnectorFactory *ProviderRegistry::ResolveProvider(const ParsedUri &uri) {
-	return GetFactory(uri.scheme);
+	auto &state = GetRuntimeState();
+	std::lock_guard<std::mutex> lock(state.mtx);
+	if (state.factories.empty()) {
+		// Lazy initialize if not already done
+		RegisterHmsProvider();
+		RegisterMockProvider();
+	}
+	for (auto &factory : state.factories) {
+		if (factory->CanHandle(uri)) {
+			return factory.get();
+		}
+	}
+	return nullptr;
+}
+
+void ProviderRegistry::Initialize() {
+	RegisterHmsProvider();
+	RegisterMockProvider();
+}
+
+void MetastoreRuntime::SetDatabase(DatabaseInstance &db) {
+	auto &state = GetRuntimeState();
+	std::lock_guard<std::mutex> lock(state.mtx);
+	state.db = &db;
+	state.con = make_uniq<Connection>(db);
+}
+
+Connection &MetastoreRuntime::GetConnection() {
+	auto &state = GetRuntimeState();
+	std::lock_guard<std::mutex> lock(state.mtx);
+	if (!state.con) {
+		throw InternalException("MetastoreRuntime::GetConnection called before SetDatabase");
+	}
+	return *state.con;
 }
 
 duckdb::unique_ptr<IMetastoreConnector> CreateConnector(const std::string &catalog_name) {
@@ -62,7 +91,9 @@ duckdb::unique_ptr<IMetastoreConnector> CreateConnector(const std::string &catal
 	auto parsed_uri = ParsedUri::Parse(config_opt->endpoint);
 	auto factory = ProviderRegistry::ResolveProvider(parsed_uri);
 	if (!factory) {
-		throw BinderException("No metastore provider factory found for endpoint: " + config_opt->endpoint);
+		throw BinderException("Invalid Error: Could not infer metastore provider from endpoint. Use thrift://, "
+		                      "thrift+http(s)://, or http(s):// for HMS, arn:aws:glue: for Glue, or "
+		                      "https://...dataproc... for Dataproc.");
 	}
 
 	return factory->CreateConnector(*config_opt);

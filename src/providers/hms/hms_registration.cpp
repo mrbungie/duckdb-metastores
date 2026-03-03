@@ -6,9 +6,16 @@ namespace duckdb {
 
 class HmsConnectorFactory : public IConnectorFactory {
 public:
+	bool CanHandle(const ParsedUri &uri) const override {
+		return uri.scheme == "thrift" || uri.scheme == "thrift+ssl" || uri.scheme == "thrift+http" ||
+		       uri.scheme == "thrift+https";
+	}
+
 	MetastoreCatalogConfig NormalizeConfig(const std::string &catalog_name, const ParsedUri &uri,
 	                                       const case_insensitive_map_t<Value> &options) override {
 		MetastoreCatalogConfig config;
+		config.catalog_name = catalog_name;
+		config.options = options;
 		config.provider = MetastoreProviderType::HMS;
 		// Reconstruct the full endpoint from ParsedUri if it's missing the scheme
 		if (uri.scheme.empty()) {
@@ -35,10 +42,7 @@ public:
 };
 
 void RegisterHmsProvider() {
-	ProviderRegistry::Register("thrift", duckdb::make_uniq<HmsConnectorFactory>());
-	ProviderRegistry::Register("thrift+ssl", duckdb::make_uniq<HmsConnectorFactory>());
-	ProviderRegistry::Register("thrift+http", duckdb::make_uniq<HmsConnectorFactory>());
-	ProviderRegistry::Register("thrift+https", duckdb::make_uniq<HmsConnectorFactory>());
+	ProviderRegistry::Register(duckdb::make_uniq<HmsConnectorFactory>());
 }
 
 } // namespace duckdb

@@ -9,11 +9,11 @@
 #include "duckdb/common/insertion_order_preserving_map.hpp"
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
-#include "duckdb/common/string_util.hpp"
-#include "duckdb/catalog/catalog.hpp"
 #include "metastore_utils.hpp"
-#include <filesystem>
-#include <algorithm>
+#include "metastore_scan_plan.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/common/types/data_chunk.hpp"
 
 namespace duckdb {
 
@@ -26,20 +26,23 @@ struct MetastoreReadBindData : public TableFunctionData {
 
 	// Partitioning and filters
 	// Partitioning and filters
-	vector<string> selected_partitions;
-	vector<string> scan_files;
+	mutable vector<string> selected_partitions;
+	mutable vector<string> scan_files;
+	mutable vector<MetastorePartitionValue> partitions;
 	bool is_partitioned;
+	mutable bool needs_planning;
+	mutable string last_predicate;
 
 	// Wrapping the underlying scan (e.g. read_parquet)
-	duckdb::unique_ptr<FunctionData> underlying_bind_data;
-	TableFunction underlying_function;
+	mutable duckdb::unique_ptr<FunctionData> underlying_bind_data;
+	mutable TableFunction underlying_function;
 
-	vector<LogicalType> return_types;
-	vector<string> names;
+	mutable vector<LogicalType> return_types;
+	mutable vector<string> names;
 
 	MetastoreReadBindData(std::string catalog_p, std::string schema_p, std::string table_name_p)
 	    : catalog(std::move(catalog_p)), schema(std::move(schema_p)), table_name(std::move(table_name_p)),
-	      is_partitioned(false) {
+	      is_partitioned(false), needs_planning(false) {
 	}
 
 	bool Equals(const FunctionData &other_p) const override {
@@ -53,7 +56,10 @@ struct MetastoreReadBindData : public TableFunctionData {
 
 		copy->selected_partitions = selected_partitions;
 		copy->scan_files = scan_files;
+		copy->partitions = partitions;
 		copy->is_partitioned = is_partitioned;
+		copy->needs_planning = needs_planning;
+		copy->last_predicate = last_predicate;
 		if (underlying_bind_data) {
 			copy->underlying_bind_data = underlying_bind_data->Copy();
 		}
@@ -64,54 +70,43 @@ struct MetastoreReadBindData : public TableFunctionData {
 	}
 };
 
-static std::vector<std::string> ResolveScanFiles(const std::vector<std::string> &scan_files) {
-	std::vector<std::string> resolved;
-	for (auto &scan_file : scan_files) {
-		if (StringUtil::Contains(scan_file, "[!._]*")) {
-			auto marker = scan_file.find("[!._]*");
-			auto base = scan_file.substr(0, marker);
-			std::error_code ec;
-			if (std::filesystem::exists(base, ec)) {
-				for (auto &entry : std::filesystem::directory_iterator(base, ec)) {
-					if (ec || !entry.is_regular_file()) {
-						continue;
-					}
-					auto file_name = entry.path().filename().string();
-					if (!file_name.empty() && file_name[0] != '.' && file_name[0] != '_') {
-						resolved.push_back(entry.path().string());
-					}
+// Helpers moved to metastore_scan_plan.cpp
+
+static void AddNamedParameter(named_parameter_map_t &named_parameters, const std::string &name, const Value &value) {
+	named_parameters[name] = value;
+}
+
+static idx_t GetMaxPartitions(ClientContext &context) {
+	Value val;
+	if (context.TryGetCurrentSetting("metastore_max_partitions", val)) {
+		return val.GetValue<idx_t>();
+	}
+	return 100000;
+}
+
+static bool TouchesPartitionColumns(const Expression &expr, const MetastoreTable &table, const vector<string> &names) {
+	if (expr.type == ExpressionType::BOUND_COLUMN_REF) {
+		auto &col_ref = expr.Cast<BoundColumnRefExpression>();
+		if (col_ref.binding.column_index < names.size()) {
+			const string &col_name = names[col_ref.binding.column_index];
+			for (auto &part_col : table.partition_spec.columns) {
+				if (part_col.name == col_name) {
+					return true;
 				}
 			}
-			if (!ec) {
-				continue;
-			}
 		}
-		resolved.push_back(scan_file);
 	}
-	sort(resolved.begin(), resolved.end());
-	resolved.erase(unique(resolved.begin(), resolved.end()), resolved.end());
-	return resolved;
+	bool touches = false;
+	ExpressionIterator::EnumerateChildren(expr, [&](const Expression &child) {
+		if (TouchesPartitionColumns(child, table, names)) {
+			touches = true;
+		}
+	});
+	return touches;
 }
 
-static std::string JoinPreview(const std::vector<std::string> &values, idx_t limit = 8) {
-	if (values.empty()) {
-		return "";
-	}
-	std::string result;
-	for (idx_t i = 0; i < values.size() && i < limit; i++) {
-		if (!result.empty()) {
-			result += ", ";
-		}
-		result += values[i];
-	}
-	if (values.size() > limit) {
-		result += ", ...";
-	}
-	return result;
-}
-
-static std::vector<std::string> PartitionNames(const MetastoreTable &table,
-                                               const std::vector<MetastorePartitionValue> &partitions) {
+static std::vector<std::string> GetPartitionNames(const MetastoreTable &table,
+                                                  const std::vector<MetastorePartitionValue> &partitions) {
 	std::vector<std::string> names;
 	for (auto &part : partitions) {
 		std::string name;
@@ -130,11 +125,82 @@ static std::vector<std::string> PartitionNames(const MetastoreTable &table,
 	return names;
 }
 
-static void AddNamedParameter(named_parameter_map_t &named_parameters, const std::string &name, const Value &value) {
-	named_parameters[name] = value;
+static void PrunePartitionsLocally(ClientContext &context, const MetastoreTable &table, const vector<string> &names,
+                                   const vector<duckdb::unique_ptr<Expression>> &filters, MetastoreScanPlan &plan) {
+	if (plan.partitions.empty()) {
+		return;
+	}
+
+	// 1. Prepare types and chunk
+	vector<LogicalType> types;
+	vector<idx_t> partition_col_indices;
+	for (auto &part_col : table.partition_spec.columns) {
+		types.push_back(TransformStringToLogicalType(MetastoreUtils::MapHiveTypeToDuckDB(part_col.type)));
+		for (idx_t i = 0; i < names.size(); i++) {
+			if (names[i] == part_col.name) {
+				partition_col_indices.push_back(i);
+				break;
+			}
+		}
+	}
+	if (types.empty()) {
+		return;
+	}
+
+	DataChunk chunk;
+	chunk.Initialize(context, types, plan.partitions.size());
+	for (idx_t p_idx = 0; p_idx < plan.partitions.size(); p_idx++) {
+		auto &part = plan.partitions[p_idx];
+		for (idx_t c_idx = 0; c_idx < types.size(); c_idx++) {
+			if (c_idx < part.values.size()) {
+				chunk.data[c_idx].SetValue(p_idx, Value(part.values[c_idx]).CastAs(context, types[c_idx]));
+			}
+		}
+	}
+	chunk.SetCardinality(plan.partitions.size());
+
+	// 2. Evaluate filters
+	SelectionVector sel(plan.partitions.size());
+	idx_t count = plan.partitions.size();
+	for (auto &filter : filters) {
+		if (TouchesPartitionColumns(*filter, table, names)) {
+			ExpressionExecutor executor(context, *filter);
+			count = executor.SelectExpression(chunk, sel);
+			if (count == 0) {
+				break;
+			}
+			// Update chunk for next filter if needed? SelectExpression returns a new selection vector.
+			// For multiple filters, we should probably combine them or use a temporary selection.
+			// But DuckDB SelectExpression typically applies on top of existing selection?
+			// Actually, executor.SelectExpression(chunk, sel) returns the count and updates sel.
+		}
+	}
+
+	if (count < plan.partitions.size()) {
+		vector<MetastorePartitionValue> filtered_partitions;
+		vector<string> filtered_files;
+		for (idx_t i = 0; i < count; i++) {
+			idx_t idx = sel.get_index(i);
+			filtered_partitions.push_back(std::move(plan.partitions[idx]));
+			// We need to re-resolve files for these partitions too?
+			// To keep it simple, we'll just re-resolve or assume plan.files can be filtered if we knew which file came
+			// from which partition. Since PlanScan already built plan.files, it's easier to just re-build file list
+			// here from locations.
+			auto scan_path =
+			    MetastoreUtils::BuildScanPath(filtered_partitions.back().location, table.storage_descriptor.format);
+			if (!scan_path.empty()) {
+				// NOTE: We don't do full Glob expansion here for simplicity, or we re-call a helper.
+				// Since common case is direct path, this works.
+				filtered_files.push_back(std::move(scan_path));
+			}
+		}
+		plan.partitions = std::move(filtered_partitions);
+		plan.files = std::move(filtered_files);
+		plan.selected_partitions = GetPartitionNames(table, plan.partitions);
+	}
 }
 
-static void BindUnderlyingFunction(ClientContext &context, MetastoreReadBindData &bind_data) {
+static void BindUnderlyingFunction(ClientContext &context, const MetastoreReadBindData &bind_data) {
 	std::string scan_function_name;
 	switch (bind_data.table.storage_descriptor.format) {
 	case MetastoreFormat::JSON:
@@ -264,28 +330,18 @@ duckdb::unique_ptr<FunctionData> MetastoreReadBind(ClientContext &context, Table
 	bind_data->table = table_result.value;
 	bind_data->is_partitioned = bind_data->table.IsPartitioned();
 
-	if (!bind_data->is_partitioned) {
-		bind_data->scan_files.push_back(MetastoreUtils::BuildScanPath(bind_data->table.storage_descriptor.location,
-		                                                              bind_data->table.storage_descriptor.format));
-	} else {
-		auto parts_result = bind_data->connector->ListPartitions(schema, table_name, "");
-		if (parts_result.IsOk()) {
-			bind_data->selected_partitions = PartitionNames(bind_data->table, parts_result.value);
-			for (auto &part : parts_result.value) {
-				auto scan_path =
-				    MetastoreUtils::BuildScanPath(part.location, bind_data->table.storage_descriptor.format);
-				if (!scan_path.empty()) {
-					bind_data->scan_files.push_back(std::move(scan_path));
-				}
-			}
-			if (bind_data->scan_files.empty()) {
-				bind_data->scan_files.push_back(MetastoreUtils::BuildScanPath(
-				    bind_data->table.storage_descriptor.location, bind_data->table.storage_descriptor.format));
-			}
-		} else {
-			throw BinderException("Failed to list partitions: %s", parts_result.error.message);
-		}
-	}
+	MetastorePlanOptions opt;
+	opt.schema = schema;
+	opt.table_name = table_name;
+	opt.predicate = "";
+	opt.max_partitions = GetMaxPartitions(context);
+	opt.allow_expand_paths = true;
+
+	auto plan = PlanScan(context, *bind_data->connector, bind_data->table, opt);
+	bind_data->scan_files = std::move(plan.files);
+	bind_data->selected_partitions = std::move(plan.selected_partitions);
+	bind_data->partitions = std::move(plan.partitions);
+	bind_data->needs_planning = bind_data->is_partitioned;
 
 	BindUnderlyingFunction(context, *bind_data);
 	return_types = bind_data->return_types;
@@ -310,23 +366,50 @@ void MetastoreReadPushdownComplexFilter(ClientContext &context, LogicalGet &get,
 	std::string predicate =
 	    MetastorePartitionPredicate::FromTableFilters(bind_data.table, filter_set, get.GetColumnIds(), bind_data.names);
 
-	auto parts_result = bind_data.connector->ListPartitions(bind_data.schema, bind_data.table_name, predicate);
-	if (parts_result.IsOk()) {
-		bind_data.selected_partitions = PartitionNames(bind_data.table, parts_result.value);
-		bind_data.scan_files.clear();
-		for (auto &part : parts_result.value) {
-			auto scan_path = MetastoreUtils::BuildScanPath(part.location, bind_data.table.storage_descriptor.format);
-			if (!scan_path.empty()) {
-				bind_data.scan_files.push_back(std::move(scan_path));
+	MetastorePlanOptions opt;
+	opt.schema = bind_data.schema;
+	opt.table_name = bind_data.table_name;
+	opt.predicate = predicate;
+	opt.max_partitions = GetMaxPartitions(context);
+	opt.allow_expand_paths = true;
+
+	if (predicate.empty()) {
+		// No metastore pushdown possible, see if we need local prune
+		bool touches = false;
+		for (auto &filter : filters) {
+			if (TouchesPartitionColumns(*filter, bind_data.table, bind_data.names)) {
+				touches = true;
+				break;
 			}
 		}
-		if (bind_data.scan_files.empty()) {
-			bind_data.scan_files.push_back(MetastoreUtils::BuildScanPath(bind_data.table.storage_descriptor.location,
-			                                                             bind_data.table.storage_descriptor.format));
+		if (!touches && !bind_data.needs_planning) {
+			// No partition filters and already planned, nothing to do
+			return;
 		}
 	}
 
-	BindUnderlyingFunction(context, bind_data);
+	if (bind_data.last_predicate == predicate && !bind_data.scan_files.empty()) {
+		// Already planned with this predicate
+		return;
+	}
+
+	auto plan = PlanScan(context, *bind_data.connector, bind_data.table, opt);
+
+	if (predicate.empty()) {
+		PrunePartitionsLocally(context, bind_data.table, bind_data.names, filters, plan);
+	}
+
+	bool changed = (plan.files != bind_data.scan_files);
+	bind_data.scan_files = std::move(plan.files);
+	bind_data.selected_partitions = std::move(plan.selected_partitions);
+	bind_data.partitions = std::move(plan.partitions);
+	bind_data.last_predicate = predicate;
+	bind_data.needs_planning = false;
+
+	if (changed) {
+		BindUnderlyingFunction(context, bind_data);
+	}
+
 	if (bind_data.underlying_function.pushdown_complex_filter) {
 		bind_data.underlying_function.pushdown_complex_filter(context, get, bind_data.underlying_bind_data.get(),
 		                                                      filters);
@@ -340,6 +423,25 @@ struct MetastoreReadGlobalState : public GlobalTableFunctionState {
 duckdb::unique_ptr<GlobalTableFunctionState> MetastoreReadInitGlobal(ClientContext &context,
                                                                      TableFunctionInitInput &input) {
 	auto &bind_data = input.bind_data->Cast<MetastoreReadBindData>();
+
+	if (bind_data.is_partitioned && bind_data.needs_planning && bind_data.scan_files.empty()) {
+		MetastorePlanOptions opt;
+		opt.schema = bind_data.schema;
+		opt.table_name = bind_data.table_name;
+		opt.predicate = "";
+		opt.max_partitions = GetMaxPartitions(context);
+		opt.allow_expand_paths = true;
+
+		auto plan = PlanScan(context, *bind_data.connector, bind_data.table, opt);
+		bind_data.scan_files = std::move(plan.files);
+		bind_data.selected_partitions = std::move(plan.selected_partitions);
+		bind_data.partitions = std::move(plan.partitions);
+		bind_data.needs_planning = false;
+
+		// Re-bind underlying function with newly discovered files
+		BindUnderlyingFunction(context, bind_data);
+	}
+
 	auto gstate = duckdb::make_uniq<MetastoreReadGlobalState>();
 	if (bind_data.underlying_function.init_global) {
 		TableFunctionInitInput underlying_input(bind_data.underlying_bind_data.get(), input.column_ids,

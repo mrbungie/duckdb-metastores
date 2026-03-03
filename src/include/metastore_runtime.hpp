@@ -5,6 +5,8 @@
 #include <optional>
 #include <string>
 
+#include "duckdb/main/connection.hpp"
+
 namespace duckdb {
 
 void RegisterMetastoreAttachConfig(const std::string &catalog_name, MetastoreCatalogConfig config);
@@ -12,9 +14,15 @@ std::optional<MetastoreCatalogConfig> LookupMetastoreAttachConfig(const std::str
 
 class ProviderRegistry {
 public:
-	static void Register(const std::string &provider_id, duckdb::unique_ptr<IConnectorFactory> factory);
-	static IConnectorFactory *GetFactory(const std::string &provider_id);
+	static void Register(duckdb::unique_ptr<IConnectorFactory> factory);
 	static IConnectorFactory *ResolveProvider(const ParsedUri &uri);
+	static void Initialize();
+};
+
+class MetastoreRuntime {
+public:
+	static void SetDatabase(DatabaseInstance &db);
+	static Connection &GetConnection();
 };
 
 duckdb::unique_ptr<IMetastoreConnector> CreateConnector(const std::string &catalog_name);

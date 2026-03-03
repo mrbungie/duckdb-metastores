@@ -105,6 +105,7 @@ public:
 class IConnectorFactory {
 public:
 	virtual ~IConnectorFactory() = default;
+	virtual bool CanHandle(const ParsedUri &uri) const = 0;
 	virtual MetastoreCatalogConfig NormalizeConfig(const std::string &catalog_name, const ParsedUri &uri,
 	                                               const case_insensitive_map_t<Value> &options) = 0;
 	virtual duckdb::unique_ptr<IMetastoreConnector> CreateConnector(const MetastoreCatalogConfig &config) = 0;

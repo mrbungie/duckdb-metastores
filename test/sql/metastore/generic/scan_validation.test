@@ -8,7 +8,7 @@ require metastore
 statement error
 SELECT * FROM metastore_table_info('catalog', 'schema', 'table_name');
 ----
-Catalog is not attached
+Catalog is not attached as metastore, or not found: catalog
 
 # ---- Missing argument tests ----
 
@@ -78,4 +78,4 @@ SELECT COUNT(*) FROM (
     SELECT * FROM metastore_table_info('my_catalog', 'my_schema', 'my_table')
 );
 ----
-Catalog is not attached as metastore: my_catalog
+Catalog is not attached as metastore, or not found: my_catalog

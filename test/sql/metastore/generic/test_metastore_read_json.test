@@ -10,4 +10,4 @@ require metastore
 statement error
 SELECT * FROM metastore_read('missing_cat', 'db', 'json_table')
 ----
-Metastore catalog missing_cat not found or unsupported
+Catalog is not attached as metastore, or not found: missing_cat
