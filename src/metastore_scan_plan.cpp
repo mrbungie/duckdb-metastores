@@ -1,6 +1,7 @@
 #include "metastore_scan_plan.hpp"
 #include "connector/metastore_connector.hpp"
 #include "metastore_utils.hpp"
+#include "formats/format_reader.hpp"
 #include <algorithm>
 
 namespace duckdb {
@@ -33,9 +34,10 @@ MetastoreScanPlan PlanScan(ClientContext &context, IMetastoreConnector &connecto
 	plan.partitions_examined = 0;
 
 	auto &fs = FileSystem::GetFileSystem(context);
+	auto &reader = GetFormatReader(table.storage_descriptor.format);
 
 	auto AddResolvedFiles = [&](const string &raw_path, idx_t part_idx) {
-		auto path = MetastoreUtils::BuildScanPath(raw_path, table.storage_descriptor.format);
+		auto path = reader.BuildScanPath(raw_path);
 		if (path.empty()) {
 			return;
 		}

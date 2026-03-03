@@ -73,27 +73,4 @@ std::string MetastoreUtils::NormalizeLocation(const std::string &location) {
 	return StringUtil::Lower(res);
 }
 
-std::string MetastoreUtils::BuildScanPath(const std::string &raw_location, MetastoreFormat format) {
-	auto location = NormalizeLocation(raw_location);
-	if (location.empty()) {
-		return location;
-	}
-	if (StringUtil::Contains(location, "*") || StringUtil::Contains(location, "?")) {
-		return location;
-	}
-	if (format == MetastoreFormat::CSV || format == MetastoreFormat::Parquet || format == MetastoreFormat::JSON) {
-		auto lower = StringUtil::Lower(location);
-		if (StringUtil::EndsWith(lower, ".parquet") || StringUtil::EndsWith(lower, ".csv") ||
-		    StringUtil::EndsWith(lower, ".json") || StringUtil::EndsWith(lower, ".gz") ||
-		    StringUtil::EndsWith(lower, ".zst")) {
-			return location;
-		}
-		if (!StringUtil::EndsWith(location, "/")) {
-			return location + "/[!._]*";
-		}
-		return location + "[!._]*";
-	}
-	return location;
-}
-
 } // namespace duckdb

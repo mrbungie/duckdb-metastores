@@ -18,6 +18,10 @@ add_library(
   providers/hms/hms_registration.cpp
   providers/mock/mock_connector.cpp
   providers/mock/mock_metastore.cpp
+  formats/format_reader.cpp
+  formats/parquet_reader.cpp 
+  formats/csv_reader.cpp
+  formats/json_reader.cpp
 )
 
 target_link_libraries(metastore_src_lib PRIVATE hms_thrift_lib)
