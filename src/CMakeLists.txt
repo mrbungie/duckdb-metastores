@@ -24,4 +24,5 @@ target_link_libraries(metastore_src_lib PRIVATE hms_thrift_lib)
 
 set(METASTORE_EXTENSION_OBJECTS
     $<TARGET_OBJECTS:metastore_src_lib>
+    $<TARGET_OBJECTS:hms_thrift_lib>
     PARENT_SCOPE)
