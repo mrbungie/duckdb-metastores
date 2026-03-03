@@ -10,12 +10,12 @@ SELECT * FROM metastore_read('missing_cat', 'db', 'table')
 ----
 Metastore catalog missing_cat not found or unsupported
 
-# Test that empty string fails in metastore_scan
+# Test that empty string fails in metastore_table_info
 statement error
-SELECT * FROM metastore_scan('', 'db', 'table')
+SELECT * FROM metastore_table_info('', 'db', 'table')
 ----
 
-# Test that NULL fails in metastore_scan
+# Test that NULL fails in metastore_table_info
 statement error
-SELECT * FROM metastore_scan(NULL, 'db', 'table')
+SELECT * FROM metastore_table_info(NULL, 'db', 'table')
 ----

@@ -1,7 +1,7 @@
-#include "functions/metastore_functions.hpp"
+#include "metastore_functions.hpp"
 #include "metastore_runtime.hpp"
 #include "connector/metastore_connector.hpp"
-#include "metastore_planner.hpp"
+#include "metastore_partition_predicate.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/optimizer/filter_combiner.hpp"
@@ -25,7 +25,7 @@ struct MetastoreReadBindData : public TableFunctionData {
 	duckdb::unique_ptr<IMetastoreConnector> connector;
 
 	// Partitioning and filters
-	vector<MetastorePartitionPredicate> partition_predicates;
+	// Partitioning and filters
 	vector<string> selected_partitions;
 	vector<string> scan_files;
 	bool is_partitioned;
@@ -50,7 +50,7 @@ struct MetastoreReadBindData : public TableFunctionData {
 	duckdb::unique_ptr<FunctionData> Copy() const override {
 		auto copy = duckdb::make_uniq<MetastoreReadBindData>(catalog, schema, table_name);
 		copy->table = table;
-		copy->partition_predicates = partition_predicates;
+
 		copy->selected_partitions = selected_partitions;
 		copy->scan_files = scan_files;
 		copy->is_partitioned = is_partitioned;
@@ -254,21 +254,7 @@ duckdb::unique_ptr<FunctionData> MetastoreReadBind(ClientContext &context, Table
 
 	auto bind_data = duckdb::make_uniq<MetastoreReadBindData>(catalog, schema, table_name);
 
-	auto config_opt = LookupMetastoreAttachConfig(catalog);
-	if (!config_opt.has_value()) {
-		throw BinderException("Metastore catalog %s not found or unsupported", catalog);
-	}
-
-	if (config_opt->provider != MetastoreProviderType::HMS) {
-		throw BinderException("Only HMS provider is supported in this build");
-	}
-	auto parsed_uri = ParsedUri::Parse(config_opt->endpoint);
-	auto factory = ProviderRegistry::ResolveProvider(parsed_uri);
-	if (!factory) {
-		throw BinderException("No factory found for endpoint: " + config_opt->endpoint);
-	}
-
-	bind_data->connector = factory->CreateConnector(*config_opt);
+	bind_data->connector = CreateConnector(catalog);
 
 	auto table_result = bind_data->connector->GetTable(schema, table_name);
 	if (!table_result.IsOk()) {
@@ -322,7 +308,7 @@ void MetastoreReadPushdownComplexFilter(ClientContext &context, LogicalGet &get,
 	vector<FilterPushdownResult> pushdown_results;
 	TableFilterSet filter_set = combiner.GenerateTableScanFilters(get.GetColumnIds(), pushdown_results);
 	std::string predicate =
-	    MetastorePlanner::GeneratePartitionPredicate(bind_data.table, filter_set, get.GetColumnIds(), bind_data.names);
+	    MetastorePartitionPredicate::FromTableFilters(bind_data.table, filter_set, get.GetColumnIds(), bind_data.names);
 
 	auto parts_result = bind_data.connector->ListPartitions(bind_data.schema, bind_data.table_name, predicate);
 	if (parts_result.IsOk()) {
@@ -409,14 +395,21 @@ InsertionOrderPreservingMap<std::string> MetastoreReadToString(TableFunctionToSt
 	return result;
 }
 
-TableFunction GetMetastoreReadFunction() {
-	TableFunction func("metastore_read", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
-	                   MetastoreReadExecute, MetastoreReadBind, MetastoreReadInitGlobal, MetastoreReadInitLocal);
+TableFunctionSet MetastoreFunctions::GetMetastoreReadFunction() {
+	TableFunctionSet function_set("metastore_read");
+
+	// TODO: Fix state management (i.e. look at
+	// https://github.com/duckdb/duckdb-iceberg/blob/main/src/iceberg_functions/iceberg_table_properties_functions.cpp)
+	auto func = TableFunction({LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR}, MetastoreReadExecute,
+	                          MetastoreReadBind, MetastoreReadInitGlobal, MetastoreReadInitLocal);
 	func.filter_pushdown = true;
 	func.pushdown_complex_filter = MetastoreReadPushdownComplexFilter;
 	func.projection_pushdown = true;
 	func.to_string = MetastoreReadToString;
-	return func;
+
+	function_set.AddFunction(func);
+
+	return function_set;
 }
 
 } // namespace duckdb

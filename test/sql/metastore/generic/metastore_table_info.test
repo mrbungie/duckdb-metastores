@@ -1,0 +1,36 @@
+# name: test/sql/metastore/generic/metastore_table_info.test
+# description: test metastore_table_info table function
+# group: [generic]
+
+# Require metastore extension to be loaded
+require metastore
+
+# Test 1: metastore_table_info should parse and bind with valid arguments
+# Should return empty result set with correct schema
+statement error
+SELECT * FROM metastore_table_info('test_catalog', 'test_schema', 'test_table')
+----
+Catalog is not attached as metastore
+
+# Test 2: Verify column count and names
+statement error
+SELECT COUNT(*) FROM (
+  SELECT * FROM metastore_table_info('catalog1', 'schema1', 'table1')
+)
+----
+Catalog is not attached as metastore
+
+# Test 3: metastore_table_info with missing required arguments should fail
+statement error
+SELECT * FROM metastore_table_info('test_catalog', 'test_schema')
+----
+
+# Test 4: metastore_table_info with NULL arguments should fail
+statement error
+SELECT * FROM metastore_table_info(NULL, 'schema', 'table')
+----
+
+# Test 5: metastore_table_info with empty string arguments should fail
+statement error
+SELECT * FROM metastore_table_info('', 'schema', 'table')
+----

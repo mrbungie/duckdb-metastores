@@ -1,5 +1,5 @@
 # name: test/sql/metastore/hms/hms_duckdb_smoke.test
-# description: validate DuckDB queries and HMS metastore_scan on local container
+# description: validate DuckDB queries and HMS metastore_table_info on local container
 # group: [hms]
 
 require metastore
@@ -24,7 +24,7 @@ statement ok
 ATTACH 'thrift://${HMS_LOCAL_ENDPOINT}' AS hms (TYPE metastore);
 
 statement error
-SELECT * FROM metastore_scan('hms', 'default', 'missing_table');
+SELECT * FROM metastore_table_info('hms', 'default', 'missing_table');
 ----
 HMS table not found
 

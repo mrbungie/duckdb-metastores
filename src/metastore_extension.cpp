@@ -1,5 +1,6 @@
 #define DUCKDB_EXTENSION_MAIN
 
+#include "metastore_functions.hpp"
 #include "metastore_extension.hpp"
 #include "metastore_duckdb.hpp"
 #include "duckdb/main/config.hpp"
@@ -8,8 +9,9 @@ namespace duckdb {
 
 void RegisterHmsProvider();
 
-static void LoadInternal(DatabaseInstance &db_instance) {
-	auto &config = DBConfig::GetConfig(db_instance);
+static void LoadInternal(ExtensionLoader &loader) {
+	auto &instance = loader.GetDatabaseInstance();
+	auto &config = DBConfig::GetConfig(instance);
 
 	// Register providers
 	RegisterHmsProvider();
@@ -22,12 +24,19 @@ static void LoadInternal(DatabaseInstance &db_instance) {
 	// Register functions
 	// We need a context or something to register functions?
 	// ExtensionLoader::RegisterFunction just takes the name and some pointers.
+	// Iceberg Table Functions
+	for (auto &fun : MetastoreFunctions::GetTableFunctions(loader)) {
+		loader.RegisterFunction(std::move(fun));
+	}
+
+	// Iceberg Scalar Functions
+	for (auto &fun : MetastoreFunctions::GetScalarFunctions()) {
+		loader.RegisterFunction(fun);
+	}
 }
 
 void MetastoreExtension::Load(ExtensionLoader &loader) {
-	auto &db_instance = loader.GetDatabaseInstance();
-	LoadInternal(db_instance);
-	RegisterMetastoreFunctions(loader);
+	LoadInternal(loader);
 }
 
 std::string MetastoreExtension::Name() {
@@ -47,8 +56,6 @@ std::string MetastoreExtension::Version() const {
 extern "C" {
 
 DUCKDB_CPP_EXTENSION_ENTRY(metastore, loader) {
-	auto &db = loader.GetDatabaseInstance();
-	duckdb::LoadInternal(db);
-	duckdb::RegisterMetastoreFunctions(loader);
+	duckdb::LoadInternal(loader);
 }
 }

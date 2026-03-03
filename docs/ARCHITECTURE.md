@@ -17,7 +17,7 @@ The extension hooks into duckdb primarily through two mechanisms defined in `src
    - If the table is partitioned, it replaces the scan with a call to the `metastore_read` table function. If unpartitioned, it rewrites the table reference directly to native functions like `read_parquet(...)` or `read_csv_auto(...)` using the location provided by the metastore.
 
 3. **Table Functions**:
-   - `metastore_scan`: A utility function to retrieve table details layout (catalog, schema, table_name, location, format).
+   - `metastore_table_info`: A utility function to retrieve table details layout (catalog, schema, table_name, location, format).
    - `metastore_read`: The core reading engine used to handle partitioned tables. It leverages `MetastorePlanner` to push down partition filters, then maps partitions into DuckDB's Multi-File Readers.
 
 ## Abstraction Layers (Generic vs. Implementation-Specific)
@@ -77,10 +77,7 @@ To achieve full decoupling (and seamlessly drop in Glue, Dataproc, or Iceberg RE
 | `MetastoreErrorTag` | `src/include/main/metastore_errors.hpp` | |
 | `MetastoreException` | `src/include/main/metastore_errors.hpp` | |
 | `HmsClientContext` | `src/providers/hms/hms_connector.cpp` | |
-| `MetastorePartitionPredicate` | `src/include/planner/metastore_planner.hpp` | |
-| `MetastoreScanFilter` | `src/include/planner/metastore_planner.hpp` | |
-| `MetastorePlannerResult` | `src/include/planner/metastore_planner.hpp` | |
-| `MetastorePlanner` | `src/include/planner/metastore_planner.hpp` | |
+| `MetastorePartitionPredicate` | `src/include/metastore_partition_predicate.hpp` | |
 | `MetastoreExtension` | `src/include/metastore_extension.hpp` | |
 | `MetastoreError` | `src/include/main/metastore_connector.hpp` | |
 | `MetastoreResult` | `src/include/main/metastore_connector.hpp` | |

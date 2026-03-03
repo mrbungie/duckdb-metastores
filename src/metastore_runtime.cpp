@@ -1,5 +1,6 @@
 #include "metastore_runtime.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "metastore_types.hpp"
 #include <mutex>
 #include <unordered_map>
 
@@ -50,6 +51,21 @@ IConnectorFactory *ProviderRegistry::GetFactory(const std::string &provider_id) 
 
 IConnectorFactory *ProviderRegistry::ResolveProvider(const ParsedUri &uri) {
 	return GetFactory(uri.scheme);
+}
+
+duckdb::unique_ptr<IMetastoreConnector> CreateConnector(const std::string &catalog_name) {
+	auto config_opt = LookupMetastoreAttachConfig(catalog_name);
+	if (!config_opt.has_value()) {
+		throw BinderException("Catalog is not attached as metastore, or not found: " + catalog_name);
+	}
+
+	auto parsed_uri = ParsedUri::Parse(config_opt->endpoint);
+	auto factory = ProviderRegistry::ResolveProvider(parsed_uri);
+	if (!factory) {
+		throw BinderException("No metastore provider factory found for endpoint: " + config_opt->endpoint);
+	}
+
+	return factory->CreateConnector(*config_opt);
 }
 
 } // namespace duckdb

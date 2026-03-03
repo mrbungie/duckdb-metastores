@@ -1,39 +1,21 @@
-#include "metastore_planner.hpp"
+#include "metastore_partition_predicate.hpp"
 #include "duckdb/planner/table_filter.hpp"
 #include "duckdb/planner/filter/conjunction_filter.hpp"
 #include "duckdb/planner/filter/constant_filter.hpp"
 #include "duckdb/planner/filter/in_filter.hpp"
+#include "duckdb/common/string_util.hpp"
 
 namespace duckdb {
 
-MetastorePlannerResult MetastorePlanner::Plan(const MetastoreTable &table,
-                                              const std::vector<std::string> &requested_namespaces,
-                                              const std::vector<std::string> &requested_tables) {
-	MetastorePlannerResult result;
-
-	if (requested_namespaces.size() == 1) {
-		result.scan_filter.namespace_filter = requested_namespaces.front();
-	}
-
-	if (requested_tables.size() == 1) {
-		result.scan_filter.table_filter = requested_tables.front();
-	}
-
-	result.partition_pruning_enabled = CanPrunePartitions(table);
-	if (result.partition_pruning_enabled) {
-		result.reason = "Partition pruning enabled: table has explicit non-empty partition spec.";
-	} else {
-		result.reason = "Partition pruning disabled: table has no explicit non-empty partition spec.";
-	}
-
-	return result;
-}
-
-bool MetastorePlanner::CanPrunePartitions(const MetastoreTable &table) {
+bool MetastorePartitionPredicate::CanPrune(const MetastoreTable &table) {
 	if (table.partition_spec.columns.empty()) {
 		return false;
 	}
 	return table.partition_spec.IsPartitioned() && table.IsPartitioned();
+}
+
+static std::string EscapeString(const std::string &input) {
+	return StringUtil::Replace(input, "'", "''");
 }
 
 static std::string FilterToPredicate(const std::string &col_name, const TableFilter &filter) {
@@ -63,7 +45,7 @@ static std::string FilterToPredicate(const std::string &col_name, const TableFil
 		default:
 			return "";
 		}
-		return col_name + op + "'" + constant_filter.constant.ToString() + "'";
+		return col_name + " " + op + " '" + EscapeString(constant_filter.constant.ToString()) + "'";
 	}
 	case TableFilterType::IN_FILTER: {
 		auto &in_filter = filter.Cast<InFilter>();
@@ -75,7 +57,7 @@ static std::string FilterToPredicate(const std::string &col_name, const TableFil
 			if (i > 0) {
 				in_list += ", ";
 			}
-			in_list += "'" + in_filter.values[i].ToString() + "'";
+			in_list += "'" + EscapeString(in_filter.values[i].ToString()) + "'";
 		}
 		return col_name + " IN (" + in_list + ")";
 	}
@@ -88,7 +70,7 @@ static std::string FilterToPredicate(const std::string &col_name, const TableFil
 				return ""; // If any child is unsupported, we can't safely pushdown the AND block
 			}
 			if (i > 0) {
-				result += " and ";
+				result += " AND ";
 			}
 			result += "(" + child_pred + ")";
 		}
@@ -103,7 +85,7 @@ static std::string FilterToPredicate(const std::string &col_name, const TableFil
 				return ""; // If any child is unsupported, the entire OR fails pushdown
 			}
 			if (i > 0) {
-				result += " or ";
+				result += " OR ";
 			}
 			result += "(" + child_pred + ")";
 		}
@@ -113,16 +95,16 @@ static std::string FilterToPredicate(const std::string &col_name, const TableFil
 		// HMS supports checking for __HIVE_DEFAULT_PARTITION__ but standard SQL IS NULL is tricky
 		return "";
 	case TableFilterType::IS_NOT_NULL:
-		return col_name + "!=\"__HIVE_DEFAULT_PARTITION__\"";
+		return col_name + " != '__HIVE_DEFAULT_PARTITION__'";
 	default:
 		return "";
 	}
 }
 
-std::string MetastorePlanner::GeneratePartitionPredicate(const MetastoreTable &table, const TableFilterSet &filter_set,
-                                                         const std::vector<ColumnIndex> &column_ids,
-                                                         const std::vector<std::string> &names) {
-	if (!CanPrunePartitions(table)) {
+std::string MetastorePartitionPredicate::FromTableFilters(const MetastoreTable &table, const TableFilterSet &filter_set,
+                                                          const std::vector<ColumnIndex> &column_ids,
+                                                          const std::vector<std::string> &names) {
+	if (!CanPrune(table)) {
 		return "";
 	}
 
@@ -159,7 +141,7 @@ std::string MetastorePlanner::GeneratePartitionPredicate(const MetastoreTable &t
 		std::string col_pred = FilterToPredicate(col_name, filter);
 		if (!col_pred.empty()) {
 			if (!first) {
-				predicate += " and ";
+				predicate += " AND ";
 			}
 			first = false;
 			predicate += col_pred;

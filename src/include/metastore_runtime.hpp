@@ -17,4 +17,6 @@ public:
 	static IConnectorFactory *ResolveProvider(const ParsedUri &uri);
 };
 
+duckdb::unique_ptr<IMetastoreConnector> CreateConnector(const std::string &catalog_name);
+
 } // namespace duckdb

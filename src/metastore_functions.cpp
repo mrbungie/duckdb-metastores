@@ -1,0 +1,20 @@
+#include "metastore_functions.hpp"
+
+class ExtensionLoader;
+
+namespace duckdb {
+
+vector<TableFunctionSet> MetastoreFunctions::GetTableFunctions(ExtensionLoader &loader) {
+	vector<TableFunctionSet> functions;
+
+	functions.push_back(std::move(GetMetastoreTableInfoFunction()));
+	functions.push_back(std::move(GetMetastoreReadFunction()));
+
+	return functions;
+}
+
+vector<ScalarFunction> MetastoreFunctions::GetScalarFunctions() {
+	return {};
+}
+
+} // namespace duckdb

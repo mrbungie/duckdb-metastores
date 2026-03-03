@@ -4,12 +4,13 @@ add_library(
   metastore_runtime.cpp
   metastore_secret_bridge.cpp
   metastore_types.cpp
-  metastore_planner.cpp
+  metastore_partition_predicate.cpp
   metastore_replacement_scan.cpp 
   metastore_storage_extension.cpp
   metastore_utils.cpp
-  functions/metastore_scan.cpp 
+  functions/metastore_table_info.cpp 
   functions/metastore_read.cpp
+  metastore_functions.cpp
   providers/hms/hms_connector.cpp
   providers/hms/hms_mapper.cpp
   providers/hms/hms_config.cpp
