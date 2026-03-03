@@ -4,6 +4,7 @@
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/query_result.hpp"
 #include "duckdb/common/exception.hpp"
+#include "providers/mock/mock_metastore_store.hpp"
 
 namespace duckdb {
 
@@ -49,152 +50,10 @@ static bool AnyRow(Connection &con, const string &table_ref) {
 
 // using MetastoreExtraOptions from metastore_types.hpp for state pointers
 
-class MockConnector : public IMetastoreConnector {
-public:
-	explicit MockConnector(MetastoreExtraOptions ptrs_p) : ptrs(std::move(ptrs_p)) {
-		if (ptrs.namespaces_table.empty() || ptrs.tables_table.empty() || ptrs.partitions_table.empty()) {
-			throw InvalidInputException("mock provider: missing required table pointers. "
-			                            "Provide namespaces_table, tables_table, partitions_table in ATTACH options.");
-		}
-	}
-
-	MetastoreResult<MetastoreTable> GetTable(const std::string &schema, const std::string &table) override {
-		try {
-			auto &con = GetRuntimeConnection();
-
-			auto sql = "select location, format, partition_key from " + ptrs.tables_table + " where schema_name = '" +
-			           Escape(schema) + "' and table_name = '" + Escape(table) + "' limit 1";
-			auto res = Q(con, sql);
-			if (res->RowCount() == 0) {
-				return MetastoreResult<MetastoreTable>::Error(
-				    MetastoreErrorCode::NotFound, "mock provider: table '" + schema + "." + table + "' not found in " +
-				                                      ptrs.tables_table + " (Query: " + sql + ")");
-			}
-
-			MetastoreTable out;
-			out.catalog = "mock_catalog";
-			out.namespace_name = schema;
-			out.name = table;
-
-			out.storage_descriptor.location = res->GetValue(0, 0).ToString();
-			auto fmt = StringUtil::Lower(res->GetValue(1, 0).ToString());
-			if (fmt == "parquet") {
-				out.storage_descriptor.format = MetastoreFormat::Parquet;
-			} else if (fmt == "csv") {
-				out.storage_descriptor.format = MetastoreFormat::CSV;
-			} else if (fmt == "json") {
-				out.storage_descriptor.format = MetastoreFormat::JSON;
-			} else {
-				out.storage_descriptor.format = MetastoreFormat::Unknown;
-			}
-
-			auto pkeys = res->GetValue(2, 0).ToString();
-			if (!pkeys.empty()) {
-				auto parts = StringUtil::Split(pkeys, ",");
-				for (auto &pkey : parts) {
-					MetastorePartitionColumn col;
-					StringUtil::Trim(pkey);
-					col.name = pkey;
-					col.type = "string";
-					out.partition_spec.columns.push_back(std::move(col));
-				}
-			}
-
-			// fetch columns if table is provided
-			if (!ptrs.columns_table.empty()) {
-				auto col_sql = "select column_name, column_type from " + ptrs.columns_table + " where schema_name = '" +
-				               Escape(schema) + "' and table_name = '" + Escape(table) + "' order by column_index";
-				auto col_res = Q(con, col_sql);
-				for (idx_t i = 0; i < col_res->RowCount(); i++) {
-					MetastoreColumn col;
-					col.name = col_res->GetValue(0, i).ToString();
-					col.type = col_res->GetValue(1, i).ToString();
-					out.storage_descriptor.columns.push_back(std::move(col));
-				}
-			}
-
-			return MetastoreResult<MetastoreTable>::Success(std::move(out));
-		} catch (const std::exception &ex) {
-			return MetastoreResult<MetastoreTable>::Error(MetastoreErrorCode::Transient, ex.what());
-		}
-	}
-
-	MetastoreResult<std::vector<MetastorePartitionValue>>
-	ListPartitions(const std::string &schema, const std::string &table, const std::string &predicate) override {
-		(void)predicate;
-		try {
-			auto &con = GetRuntimeConnection();
-
-			// If there are no rows for that table, return empty partitions.
-			auto sql = "select part_value, location from " + ptrs.partitions_table + " where schema_name = '" +
-			           Escape(schema) + "' and table_name = '" + Escape(table) + "'";
-			auto res = Q(con, sql);
-
-			std::vector<MetastorePartitionValue> out;
-			out.reserve(res->RowCount());
-
-			for (idx_t r = 0; r < res->RowCount(); r++) {
-				MetastorePartitionValue p;
-				auto pvals = StringUtil::Split(res->GetValue(0, r).ToString(), ",");
-				for (auto &v : pvals) {
-					StringUtil::Trim(v);
-					p.values.push_back(v);
-				}
-				p.location = res->GetValue(1, r).ToString();
-				out.push_back(std::move(p));
-			}
-
-			return MetastoreResult<std::vector<MetastorePartitionValue>>::Success(std::move(out));
-		} catch (const std::exception &ex) {
-			return MetastoreResult<std::vector<MetastorePartitionValue>>::Error(MetastoreErrorCode::Transient,
-			                                                                    ex.what());
-		}
-	}
-
-	MetastoreResult<std::vector<MetastoreNamespace>> ListNamespaces() override {
-		try {
-			auto &con = GetRuntimeConnection();
-
-			auto res = Q(con, "select name from " + ptrs.namespaces_table);
-
-			std::vector<MetastoreNamespace> out;
-			out.reserve(res->RowCount());
-
-			for (idx_t r = 0; r < res->RowCount(); r++) {
-				MetastoreNamespace ns;
-				ns.catalog = "mock_catalog";
-				ns.name = res->GetValue(0, r).ToString();
-				out.push_back(std::move(ns));
-			}
-
-			return MetastoreResult<std::vector<MetastoreNamespace>>::Success(std::move(out));
-		} catch (const std::exception &ex) {
-			return MetastoreResult<std::vector<MetastoreNamespace>>::Error(MetastoreErrorCode::Transient, ex.what());
-		}
-	}
-
-	MetastoreResult<std::vector<std::string>> ListTables(const std::string &schema) override {
-		try {
-			auto &con = GetRuntimeConnection();
-
-			auto sql = "select table_name from " + ptrs.tables_table + " where schema_name = '" + Escape(schema) + "'";
-			auto res = Q(con, sql);
-
-			std::vector<std::string> out;
-			out.reserve(res->RowCount());
-
-			for (idx_t r = 0; r < res->RowCount(); r++) {
-				out.push_back(res->GetValue(0, r).ToString());
-			}
-
-			return MetastoreResult<std::vector<std::string>>::Success(std::move(out));
-		} catch (const std::exception &ex) {
-			return MetastoreResult<std::vector<std::string>>::Error(MetastoreErrorCode::Transient, ex.what());
-		}
-	}
-
+class MockMetastoreConnector : public IMetastoreConnector {
 private:
 	MetastoreExtraOptions ptrs;
+	MockMetastoreStore store;
 
 	// minimal escaping for test usage (single quotes)
 	static string Escape(const string &s) {
@@ -210,9 +69,191 @@ private:
 		}
 		return out;
 	}
+
+	void LoadFromTables() {
+		auto &con = GetRuntimeConnection();
+
+		// 1. Load Schemas/Namespaces
+		auto ns_res = Q(con, "SELECT name FROM " + ptrs.namespaces_table);
+		for (idx_t i = 0; i < ns_res->RowCount(); i++) {
+			store.CreateSchema(ns_res->GetValue(0, i).ToString());
+		}
+
+		// 2. Load Tables
+		auto tbl_res =
+		    Q(con, "SELECT schema_name, table_name, location, format, partition_key FROM " + ptrs.tables_table);
+		for (idx_t i = 0; i < tbl_res->RowCount(); i++) {
+			auto schema = tbl_res->GetValue(0, i).ToString();
+			MockTable tbl;
+			tbl.name = tbl_res->GetValue(1, i).ToString();
+			tbl.storage.location = tbl_res->GetValue(2, i).ToString();
+			auto fmt = StringUtil::Lower(tbl_res->GetValue(3, i).ToString());
+			if (fmt == "parquet") {
+				tbl.storage.format = MockFormat::Parquet;
+			} else if (fmt == "csv") {
+				tbl.storage.format = MockFormat::Csv;
+			} else if (fmt == "json") {
+				tbl.storage.format = MockFormat::Json;
+			} else {
+				tbl.storage.format = MockFormat::Unknown;
+			}
+
+			auto pkeys = tbl_res->GetValue(4, i).ToString();
+			if (!pkeys.empty()) {
+				auto parts = StringUtil::Split(pkeys, ",");
+				for (auto &pkey : parts) {
+					StringUtil::Trim(pkey);
+					MockPartitionColumn col;
+					col.name = pkey;
+					col.type = "string";
+					tbl.partition_spec.columns.push_back(std::move(col));
+				}
+			}
+
+			// Load columns if available
+			if (!ptrs.columns_table.empty()) {
+				auto col_sql = "SELECT column_name, column_type FROM " + ptrs.columns_table + " WHERE schema_name = '" +
+				               Escape(schema) + "' AND table_name = '" + Escape(tbl.name) + "' ORDER BY column_index";
+				auto col_res = Q(con, col_sql);
+				for (idx_t j = 0; j < col_res->RowCount(); j++) {
+					MockColumn col;
+					col.name = col_res->GetValue(0, j).ToString();
+					col.type = col_res->GetValue(1, j).ToString();
+					tbl.columns.push_back(std::move(col));
+				}
+			}
+
+			store.CreateTable(schema, std::move(tbl));
+		}
+
+		// 3. Load Partitions
+		auto part_res = Q(con, "SELECT schema_name, table_name, part_value, location FROM " + ptrs.partitions_table);
+		for (idx_t i = 0; i < part_res->RowCount(); i++) {
+			auto schema = part_res->GetValue(0, i).ToString();
+			auto table = part_res->GetValue(1, i).ToString();
+
+			MockPartition part;
+			auto pvals = StringUtil::Split(part_res->GetValue(2, i).ToString(), ",");
+			for (auto &v : pvals) {
+				StringUtil::Trim(v);
+				part.values.push_back(v);
+			}
+			part.location = part_res->GetValue(3, i).ToString();
+
+			store.AddPartition(schema, table, std::move(part));
+		}
+	}
+
+public:
+	explicit MockMetastoreConnector(MetastoreExtraOptions ptrs_p) : ptrs(std::move(ptrs_p)) {
+		if (ptrs.namespaces_table.empty() || ptrs.tables_table.empty() || ptrs.partitions_table.empty()) {
+			throw InvalidInputException("mock provider: missing required table pointers. "
+			                            "Provide namespaces_table, tables_table, partitions_table in ATTACH options.");
+		}
+		LoadFromTables();
+	}
+
+	MetastoreResult<MetastoreTable> GetTable(const std::string &schema, const std::string &table_name) override {
+		try {
+			if (!store.HasTable(schema, table_name)) {
+				return MetastoreResult<MetastoreTable>::Error(
+				    MetastoreErrorCode::NotFound, "mock provider: table '" + schema + "." + table_name + "' not found");
+			}
+			auto &mock_table = store.GetTable(schema, table_name);
+			MetastoreTable out;
+			out.catalog = "mock_catalog";
+			out.namespace_name = schema;
+			out.name = mock_table.name;
+			out.storage_descriptor.location = mock_table.storage.location;
+
+			switch (mock_table.storage.format) {
+			case MockFormat::Parquet:
+				out.storage_descriptor.format = MetastoreFormat::Parquet;
+				break;
+			case MockFormat::Csv:
+				out.storage_descriptor.format = MetastoreFormat::CSV;
+				break;
+			case MockFormat::Json:
+				out.storage_descriptor.format = MetastoreFormat::JSON;
+				break;
+			default:
+				out.storage_descriptor.format = MetastoreFormat::Unknown;
+				break;
+			}
+
+			for (auto &col : mock_table.columns) {
+				MetastoreColumn mc;
+				mc.name = col.name;
+				mc.type = col.type;
+				out.storage_descriptor.columns.push_back(std::move(mc));
+			}
+
+			for (auto &pcol : mock_table.partition_spec.columns) {
+				MetastorePartitionColumn mpc;
+				mpc.name = pcol.name;
+				mpc.type = pcol.type;
+				out.partition_spec.columns.push_back(std::move(mpc));
+			}
+
+			for (auto &prop : mock_table.properties) {
+				out.properties[prop.first] = prop.second;
+			}
+
+			return MetastoreResult<MetastoreTable>::Success(std::move(out));
+		} catch (const std::exception &ex) {
+			return MetastoreResult<MetastoreTable>::Error(MetastoreErrorCode::Transient, ex.what());
+		}
+	}
+
+	MetastoreResult<std::vector<MetastorePartitionValue>>
+	ListPartitions(const std::string &schema, const std::string &table, const std::string &predicate) override {
+		(void)predicate;
+		try {
+			if (!store.HasTable(schema, table)) {
+				return MetastoreResult<std::vector<MetastorePartitionValue>>::Success({});
+			}
+			auto partitions = store.ListPartitions(schema, table);
+			std::vector<MetastorePartitionValue> out;
+			for (auto &p : partitions) {
+				MetastorePartitionValue mp;
+				mp.values = p.values;
+				mp.location = p.location;
+				out.push_back(std::move(mp));
+			}
+			return MetastoreResult<std::vector<MetastorePartitionValue>>::Success(std::move(out));
+		} catch (const std::exception &ex) {
+			return MetastoreResult<std::vector<MetastorePartitionValue>>::Error(MetastoreErrorCode::Transient,
+			                                                                    ex.what());
+		}
+	}
+
+	MetastoreResult<std::vector<MetastoreNamespace>> ListNamespaces() override {
+		try {
+			auto names = store.ListSchemas();
+			std::vector<MetastoreNamespace> out;
+			for (auto &name : names) {
+				MetastoreNamespace ns;
+				ns.catalog = "mock_catalog";
+				ns.name = name;
+				out.push_back(std::move(ns));
+			}
+			return MetastoreResult<std::vector<MetastoreNamespace>>::Success(std::move(out));
+		} catch (const std::exception &ex) {
+			return MetastoreResult<std::vector<MetastoreNamespace>>::Error(MetastoreErrorCode::Transient, ex.what());
+		}
+	}
+
+	MetastoreResult<std::vector<std::string>> ListTables(const std::string &schema) override {
+		try {
+			auto names = store.ListTables(schema);
+			return MetastoreResult<std::vector<std::string>>::Success(std::move(names));
+		} catch (const std::exception &ex) {
+			return MetastoreResult<std::vector<std::string>>::Error(MetastoreErrorCode::Transient, ex.what());
+		}
+	}
 };
 
-class MockConnectorFactory : public IConnectorFactory {
+class MockMetastoreConnectorFactory : public IConnectorFactory {
 public:
 	bool CanHandle(const ParsedUri &uri) const override {
 		return uri.scheme == "mock";
@@ -260,12 +301,12 @@ public:
 	}
 
 	duckdb::unique_ptr<IMetastoreConnector> CreateConnector(const MetastoreCatalogConfig &config) override {
-		return duckdb::make_uniq<MockConnector>(config.extra_options);
+		return duckdb::make_uniq<MockMetastoreConnector>(config.extra_options);
 	}
 };
 
 void RegisterMockProvider() {
-	ProviderRegistry::Register(duckdb::make_uniq<MockConnectorFactory>());
+	ProviderRegistry::Register(duckdb::make_uniq<MockMetastoreConnectorFactory>());
 }
 
 } // namespace duckdb

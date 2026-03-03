@@ -50,13 +50,27 @@ std::string MetastoreUtils::MapHiveTypeToDuckDB(const std::string &hive_type) {
 }
 
 std::string MetastoreUtils::NormalizeLocation(const std::string &location) {
-	if (StringUtil::StartsWith(location, "file://")) {
-		return location.substr(7);
+	std::string res = location;
+	if (StringUtil::StartsWith(res, "file://")) {
+		res = res.substr(7);
+	} else if (StringUtil::StartsWith(res, "file:")) {
+		res = res.substr(5);
 	}
-	if (StringUtil::StartsWith(location, "file:")) {
-		return location.substr(5);
+	// Replace all "\\" with "/"
+	for (size_t i = 0; i < res.size(); i++) {
+		if (res[i] == '\\') {
+			res[i] = '/';
+		}
 	}
-	return location;
+	// Replace "//" with "/"
+	size_t pos;
+	while ((pos = res.find("//")) != std::string::npos) {
+		res.replace(pos, 2, "/");
+	}
+	while (res.size() > 1 && res.back() == '/') {
+		res.pop_back();
+	}
+	return StringUtil::Lower(res);
 }
 
 std::string MetastoreUtils::BuildScanPath(const std::string &raw_location, MetastoreFormat format) {

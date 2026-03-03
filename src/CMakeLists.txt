@@ -16,7 +16,8 @@ add_library(
   providers/hms/hms_mapper.cpp
   providers/hms/hms_config.cpp
   providers/hms/hms_registration.cpp
-  providers/mock/mock_provider.cpp
+  providers/mock/mock_connector.cpp
+  providers/mock/mock_metastore_store.cpp
 )
 
 target_link_libraries(metastore_src_lib PRIVATE hms_thrift_lib)
