@@ -146,3 +146,20 @@ To set up debugging in CLion, there are two simple steps required. Firstly, in `
 ```
 
 The second step is to configure the unittest runner as a run/debug configuration. To do this, go to `Run -> Edit Configurations` and click `+ -> Cmake Application`. The target and executable should be `unittest`. This will run all the DuckDB tests. To specify only running the extension specific tests, add `--test-dir ../../.. [sql]` to the `Program Arguments`. Note that it is recommended to use the `unittest` executable for testing/development within CLion. The actual DuckDB CLI currently does not reliably work as a run target in CLion.
+
+## Troubleshooting
+
+If you ever encounter problems finding dependencies, make sure you actually set the `VCPKG_TOOLCHAIN_PATH` environment variable before running `make` or `cmake`. 
+
+```shell
+export VCPKG_TOOLCHAIN_PATH=`pwd`/vcpkg/scripts/buildsystems/vcpkg.cmake
+make
+```
+
+If you are still encountering the error it may be due to running the command without defining the variable and the cache working as intended. If that's the case, make sure you delete the cache before running the commands. Once it works it should continue working with make.
+
+```shell
+rm -rf build/release
+export VCPKG_TOOLCHAIN_PATH=`pwd`/vcpkg/scripts/buildsystems/vcpkg.cmake
+make
+```
