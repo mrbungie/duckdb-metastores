@@ -23,6 +23,9 @@ namespace duckdb {
 //
 // partitions table:
 //   (schema_name VARCHAR, table_name VARCHAR, part_value VARCHAR, location VARCHAR)
+//
+// columns table (optional):
+//   (schema_name VARCHAR, table_name VARCHAR, column_name VARCHAR, column_type VARCHAR, column_index INTEGER)
 
 static Connection &GetRuntimeConnection() {
 	return MetastoreRuntime::GetConnection();
@@ -85,12 +88,29 @@ public:
 				out.storage_descriptor.format = MetastoreFormat::Unknown;
 			}
 
-			auto pkey = res->GetValue(2, 0).ToString();
-			if (!pkey.empty()) {
-				MetastorePartitionColumn col;
-				col.name = pkey;
-				col.type = "string";
-				out.partition_spec.columns.push_back(std::move(col));
+			auto pkeys = res->GetValue(2, 0).ToString();
+			if (!pkeys.empty()) {
+				auto parts = StringUtil::Split(pkeys, ",");
+				for (auto &pkey : parts) {
+					MetastorePartitionColumn col;
+					StringUtil::Trim(pkey);
+					col.name = pkey;
+					col.type = "string";
+					out.partition_spec.columns.push_back(std::move(col));
+				}
+			}
+
+			// fetch columns if table is provided
+			if (!ptrs.columns_table.empty()) {
+				auto col_sql = "select column_name, column_type from " + ptrs.columns_table + " where schema_name = '" +
+				               Escape(schema) + "' and table_name = '" + Escape(table) + "' order by column_index";
+				auto col_res = Q(con, col_sql);
+				for (idx_t i = 0; i < col_res->RowCount(); i++) {
+					MetastoreColumn col;
+					col.name = col_res->GetValue(0, i).ToString();
+					col.type = col_res->GetValue(1, i).ToString();
+					out.storage_descriptor.columns.push_back(std::move(col));
+				}
 			}
 
 			return MetastoreResult<MetastoreTable>::Success(std::move(out));
@@ -115,7 +135,11 @@ public:
 
 			for (idx_t r = 0; r < res->RowCount(); r++) {
 				MetastorePartitionValue p;
-				p.values.push_back(res->GetValue(0, r).ToString());
+				auto pvals = StringUtil::Split(res->GetValue(0, r).ToString(), ",");
+				for (auto &v : pvals) {
+					StringUtil::Trim(v);
+					p.values.push_back(v);
+				}
 				p.location = res->GetValue(1, r).ToString();
 				out.push_back(std::move(p));
 			}
@@ -221,6 +245,8 @@ public:
 				config.extra_options.tables_table = children[i].ToString();
 			} else if (name == "partitions_table") {
 				config.extra_options.partitions_table = children[i].ToString();
+			} else if (name == "columns_table") {
+				config.extra_options.columns_table = children[i].ToString();
 			}
 		}
 

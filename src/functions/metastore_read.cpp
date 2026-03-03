@@ -25,7 +25,6 @@ struct MetastoreReadBindData : public TableFunctionData {
 	duckdb::unique_ptr<IMetastoreConnector> connector;
 
 	// Partitioning and filters
-	// Partitioning and filters
 	mutable vector<string> selected_partitions;
 	mutable vector<string> scan_files;
 	mutable vector<MetastorePartitionValue> partitions;
@@ -39,6 +38,9 @@ struct MetastoreReadBindData : public TableFunctionData {
 
 	mutable vector<LogicalType> return_types;
 	mutable vector<string> names;
+
+	mutable std::unordered_map<string, idx_t> file_to_part_idx;
+	mutable idx_t filename_underlying_idx = DConstants::INVALID_INDEX;
 
 	MetastoreReadBindData(std::string catalog_p, std::string schema_p, std::string table_name_p)
 	    : catalog(std::move(catalog_p)), schema(std::move(schema_p)), table_name(std::move(table_name_p)),
@@ -60,12 +62,14 @@ struct MetastoreReadBindData : public TableFunctionData {
 		copy->is_partitioned = is_partitioned;
 		copy->needs_planning = needs_planning;
 		copy->last_predicate = last_predicate;
+		copy->underlying_function = underlying_function;
 		if (underlying_bind_data) {
 			copy->underlying_bind_data = underlying_bind_data->Copy();
 		}
-		copy->underlying_function = underlying_function;
 		copy->return_types = return_types;
 		copy->names = names;
+		copy->file_to_part_idx = file_to_part_idx;
+		copy->filename_underlying_idx = filename_underlying_idx;
 		return std::move(copy);
 	}
 };
@@ -237,7 +241,9 @@ static void BindUnderlyingFunction(ClientContext &context, const MetastoreReadBi
 	named_parameter_map_t named_parameters;
 
 	if (bind_data.table.storage_descriptor.format == MetastoreFormat::JSON) {
-		if (!bind_data.table.storage_descriptor.columns.empty()) {
+		if (bind_data.table.storage_descriptor.columns.empty()) {
+			AddNamedParameter(named_parameters, "auto_detect", Value::BOOLEAN(true));
+		} else {
 			child_list_t<Value> column_types;
 			for (auto &column : bind_data.table.storage_descriptor.columns) {
 				column_types.emplace_back(column.name, Value(MetastoreUtils::MapHiveTypeToDuckDB(column.type)));
@@ -251,7 +257,7 @@ static void BindUnderlyingFunction(ClientContext &context, const MetastoreReadBi
 		}
 	}
 	if (bind_data.table.storage_descriptor.format == MetastoreFormat::CSV) {
-		AddNamedParameter(named_parameters, "header", Value::BOOLEAN(false));
+		AddNamedParameter(named_parameters, "auto_detect", Value::BOOLEAN(true));
 		auto serde_it = bind_data.table.storage_descriptor.serde_parameters.find("field.delim");
 		if (serde_it == bind_data.table.storage_descriptor.serde_parameters.end()) {
 			serde_it = bind_data.table.storage_descriptor.serde_parameters.find("serialization.format");
@@ -268,7 +274,7 @@ static void BindUnderlyingFunction(ClientContext &context, const MetastoreReadBi
 		}
 	}
 	if (bind_data.is_partitioned) {
-		AddNamedParameter(named_parameters, "hive_partitioning", Value::BOOLEAN(true));
+		AddNamedParameter(named_parameters, "filename", Value::BOOLEAN(true));
 	}
 
 	vector<LogicalType> input_table_types;
@@ -282,6 +288,15 @@ static void BindUnderlyingFunction(ClientContext &context, const MetastoreReadBi
 	try {
 		bind_data.underlying_bind_data =
 		    bind_data.underlying_function.bind(context, bind_input, bind_data.return_types, bind_data.names);
+
+		// find filename column
+		for (idx_t i = 0; i < bind_data.names.size(); i++) {
+			if (bind_data.names[i] == "filename") {
+				bind_data.filename_underlying_idx = i;
+				break;
+			}
+		}
+
 		if (bind_data.is_partitioned && !bind_data.table.storage_descriptor.columns.empty()) {
 			auto data_col_count = bind_data.table.storage_descriptor.columns.size();
 			if (bind_data.names.size() >= data_col_count) {
@@ -341,6 +356,9 @@ duckdb::unique_ptr<FunctionData> MetastoreReadBind(ClientContext &context, Table
 	bind_data->scan_files = std::move(plan.files);
 	bind_data->selected_partitions = std::move(plan.selected_partitions);
 	bind_data->partitions = std::move(plan.partitions);
+	for (idx_t i = 0; i < plan.files.size(); i++) {
+		bind_data->file_to_part_idx[MetastoreUtils::NormalizeLocation(plan.files[i])] = plan.file_partition_indices[i];
+	}
 	bind_data->needs_planning = bind_data->is_partitioned;
 
 	BindUnderlyingFunction(context, *bind_data);
@@ -401,8 +419,12 @@ void MetastoreReadPushdownComplexFilter(ClientContext &context, LogicalGet &get,
 
 	bool changed = (plan.files != bind_data.scan_files);
 	bind_data.scan_files = std::move(plan.files);
-	bind_data.selected_partitions = std::move(plan.selected_partitions);
 	bind_data.partitions = std::move(plan.partitions);
+	bind_data.file_to_part_idx.clear();
+	for (idx_t i = 0; i < plan.files.size(); i++) {
+		bind_data.file_to_part_idx[MetastoreUtils::NormalizeLocation(plan.files[i])] = plan.file_partition_indices[i];
+	}
+	bind_data.selected_partitions = std::move(plan.selected_partitions);
 	bind_data.last_predicate = predicate;
 	bind_data.needs_planning = false;
 
@@ -418,6 +440,10 @@ void MetastoreReadPushdownComplexFilter(ClientContext &context, LogicalGet &get,
 
 struct MetastoreReadGlobalState : public GlobalTableFunctionState {
 	duckdb::unique_ptr<GlobalTableFunctionState> underlying_state;
+	vector<idx_t> output_to_underlying_idx;
+	vector<idx_t> output_to_partition_idx;
+	vector<LogicalType> underlying_types;
+	idx_t filename_col_in_underlying_chunk;
 };
 
 duckdb::unique_ptr<GlobalTableFunctionState> MetastoreReadInitGlobal(ClientContext &context,
@@ -443,9 +469,52 @@ duckdb::unique_ptr<GlobalTableFunctionState> MetastoreReadInitGlobal(ClientConte
 	}
 
 	auto gstate = duckdb::make_uniq<MetastoreReadGlobalState>();
+	gstate->filename_col_in_underlying_chunk = DConstants::INVALID_INDEX;
+
+	auto data_col_count = bind_data.table.storage_descriptor.columns.size();
+	auto part_cols_count = bind_data.table.partition_spec.columns.size();
+
+	vector<idx_t> underlying_column_ids;
+	for (idx_t i = 0; i < input.column_ids.size(); i++) {
+		auto col_id = input.column_ids[i];
+		if (col_id < data_col_count || col_id >= data_col_count + part_cols_count) {
+			// Data or virtual column
+			gstate->output_to_underlying_idx.push_back(underlying_column_ids.size());
+			gstate->output_to_partition_idx.push_back(DConstants::INVALID_INDEX);
+			underlying_column_ids.push_back(col_id);
+		} else {
+			// Partition column
+			gstate->output_to_underlying_idx.push_back(DConstants::INVALID_INDEX);
+			gstate->output_to_partition_idx.push_back(col_id - data_col_count);
+		}
+	}
+
+	if (bind_data.is_partitioned && bind_data.filename_underlying_idx != DConstants::INVALID_INDEX) {
+		gstate->filename_col_in_underlying_chunk = underlying_column_ids.size();
+		underlying_column_ids.push_back(bind_data.filename_underlying_idx);
+	}
+
+	for (auto &id : underlying_column_ids) {
+		gstate->underlying_types.push_back(bind_data.return_types[id]);
+	}
+
 	if (bind_data.underlying_function.init_global) {
-		TableFunctionInitInput underlying_input(bind_data.underlying_bind_data.get(), input.column_ids,
-		                                        input.projection_ids, input.filters);
+		vector<idx_t> underlying_projection_ids;
+		for (idx_t i = 0; i < underlying_column_ids.size(); i++) {
+			underlying_projection_ids.push_back(i);
+		}
+
+		TableFilterSet underlying_filters;
+		if (input.filters) {
+			for (auto &filter : input.filters->filters) {
+				if (filter.first < data_col_count) {
+					underlying_filters.filters[filter.first] = filter.second->Copy();
+				}
+			}
+		}
+
+		TableFunctionInitInput underlying_input(bind_data.underlying_bind_data.get(), underlying_column_ids,
+		                                        underlying_projection_ids, underlying_filters);
 		gstate->underlying_state = bind_data.underlying_function.init_global(context, underlying_input);
 	}
 	return std::move(gstate);
@@ -453,6 +522,7 @@ duckdb::unique_ptr<GlobalTableFunctionState> MetastoreReadInitGlobal(ClientConte
 
 struct MetastoreReadLocalState : public LocalTableFunctionState {
 	duckdb::unique_ptr<LocalTableFunctionState> underlying_state;
+	DataChunk underlying_chunk;
 };
 
 duckdb::unique_ptr<LocalTableFunctionState> MetastoreReadInitLocal(ExecutionContext &context,
@@ -461,9 +531,38 @@ duckdb::unique_ptr<LocalTableFunctionState> MetastoreReadInitLocal(ExecutionCont
 	auto &bind_data = input.bind_data->Cast<MetastoreReadBindData>();
 	auto &gstate = global_state->Cast<MetastoreReadGlobalState>();
 	auto lstate = duckdb::make_uniq<MetastoreReadLocalState>();
+	lstate->underlying_chunk.Initialize(context.client, gstate.underlying_types);
 	if (bind_data.underlying_function.init_local) {
-		TableFunctionInitInput underlying_input(bind_data.underlying_bind_data.get(), input.column_ids,
-		                                        input.projection_ids, input.filters);
+		vector<idx_t> underlying_column_ids;
+		vector<idx_t> underlying_projection_ids;
+
+		auto data_col_count = bind_data.table.storage_descriptor.columns.size();
+		auto part_cols_count = bind_data.table.partition_spec.columns.size();
+
+		for (idx_t i = 0; i < input.column_ids.size(); i++) {
+			auto col_id = input.column_ids[i];
+			if (col_id < data_col_count || col_id >= data_col_count + part_cols_count) {
+				underlying_column_ids.push_back(col_id);
+			}
+		}
+		if (bind_data.is_partitioned && bind_data.filename_underlying_idx != DConstants::INVALID_INDEX) {
+			underlying_column_ids.push_back(bind_data.filename_underlying_idx);
+		}
+		for (idx_t i = 0; i < underlying_column_ids.size(); i++) {
+			underlying_projection_ids.push_back(i);
+		}
+
+		TableFilterSet underlying_filters;
+		if (input.filters) {
+			for (auto &filter : input.filters->filters) {
+				if (filter.first < data_col_count) {
+					underlying_filters.filters[filter.first] = filter.second->Copy();
+				}
+			}
+		}
+
+		TableFunctionInitInput underlying_input(bind_data.underlying_bind_data.get(), underlying_column_ids,
+		                                        underlying_projection_ids, underlying_filters);
 		lstate->underlying_state =
 		    bind_data.underlying_function.init_local(context, underlying_input, gstate.underlying_state.get());
 	}
@@ -482,7 +581,43 @@ void MetastoreReadExecute(ClientContext &context, TableFunctionInput &data, Data
 
 	TableFunctionInput underlying_input(bind_data.underlying_bind_data.get(), lstate.underlying_state.get(),
 	                                    gstate.underlying_state.get());
-	bind_data.underlying_function.function(context, underlying_input, output);
+	bind_data.underlying_function.function(context, underlying_input, lstate.underlying_chunk);
+
+	auto N = lstate.underlying_chunk.size();
+	output.SetCardinality(N);
+
+	for (idx_t i = 0; i < output.ColumnCount(); i++) {
+		auto u_idx = gstate.output_to_underlying_idx[i];
+		if (u_idx != DConstants::INVALID_INDEX) {
+			output.data[i].Reference(lstate.underlying_chunk.data[u_idx]);
+		} else {
+			auto p_idx = gstate.output_to_partition_idx[i];
+			if (p_idx != DConstants::INVALID_INDEX &&
+			    gstate.filename_col_in_underlying_chunk != DConstants::INVALID_INDEX) {
+				auto &filename_col = lstate.underlying_chunk.data[gstate.filename_col_in_underlying_chunk];
+				UnifiedVectorFormat filename_format;
+				filename_col.ToUnifiedFormat(N, filename_format);
+
+				auto &dest = output.data[i];
+				auto dest_data = FlatVector::GetData<string_t>(dest);
+
+				for (idx_t r = 0; r < N; r++) {
+					auto f_idx = filename_format.sel->get_index(r);
+					auto raw_fname = reinterpret_cast<string_t *>(filename_format.data)[f_idx].GetString();
+					auto fname = MetastoreUtils::NormalizeLocation(raw_fname);
+					auto it = bind_data.file_to_part_idx.find(fname);
+					if (it != bind_data.file_to_part_idx.end()) {
+						auto &p_val = bind_data.partitions[it->second];
+						dest_data[r] = StringVector::AddString(dest, p_val.values[p_idx]);
+					} else {
+						FlatVector::SetNull(dest, r, true);
+					}
+				}
+			} else {
+				FlatVector::Validity(output.data[i]).SetAllInvalid(N);
+			}
+		}
+	}
 }
 
 InsertionOrderPreservingMap<std::string> MetastoreReadToString(TableFunctionToStringInput &input) {

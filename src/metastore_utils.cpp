@@ -68,6 +68,12 @@ std::string MetastoreUtils::BuildScanPath(const std::string &raw_location, Metas
 		return location;
 	}
 	if (format == MetastoreFormat::CSV || format == MetastoreFormat::Parquet || format == MetastoreFormat::JSON) {
+		auto lower = StringUtil::Lower(location);
+		if (StringUtil::EndsWith(lower, ".parquet") || StringUtil::EndsWith(lower, ".csv") ||
+		    StringUtil::EndsWith(lower, ".json") || StringUtil::EndsWith(lower, ".gz") ||
+		    StringUtil::EndsWith(lower, ".zst")) {
+			return location;
+		}
 		if (!StringUtil::EndsWith(location, "/")) {
 			return location + "/[!._]*";
 		}

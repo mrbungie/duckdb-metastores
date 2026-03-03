@@ -8,6 +8,7 @@ namespace duckdb {
 
 struct MetastoreScanPlan {
 	vector<string> files;
+	vector<idx_t> file_partition_indices;
 	vector<string> selected_partitions;
 	vector<MetastorePartitionValue> partitions;
 	bool is_partitioned;

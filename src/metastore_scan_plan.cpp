@@ -35,14 +35,12 @@ MetastoreScanPlan PlanScan(ClientContext &context, IMetastoreConnector &connecto
 
 	auto &fs = FileSystem::GetFileSystem(context);
 
-	auto AddResolvedFiles = [&](const string &raw_path) {
+	auto AddResolvedFiles = [&](const string &raw_path, idx_t part_idx) {
 		auto path = MetastoreUtils::BuildScanPath(raw_path, table.storage_descriptor.format);
 		if (path.empty()) {
 			return;
 		}
-
-		// Replace the [!._]* logic with standard DuckDB globbing if needed
-		// For now, if it ends with [!._]*, we'll just treat it as a directory or simple glob if supported
+		// glob expansion
 		if (StringUtil::EndsWith(path, "[!._]*")) {
 			path = path.substr(0, path.size() - 6);
 			if (!StringUtil::EndsWith(path, "/")) {
@@ -56,19 +54,20 @@ MetastoreScanPlan PlanScan(ClientContext &context, IMetastoreConnector &connecto
 				auto expanded = fs.GlobFiles(path, context);
 				for (auto &file : expanded) {
 					plan.files.push_back(file.path);
+					plan.file_partition_indices.push_back(part_idx);
 				}
 			} catch (...) {
-				// If glob fails, just add as is? Or skip?
-				// Fallback to the original path if glob expansion fails
 				plan.files.push_back(path);
+				plan.file_partition_indices.push_back(part_idx);
 			}
 		} else {
 			plan.files.push_back(path);
+			plan.file_partition_indices.push_back(part_idx);
 		}
 	};
 
 	if (!plan.is_partitioned) {
-		AddResolvedFiles(table.storage_descriptor.location);
+		AddResolvedFiles(table.storage_descriptor.location, 0);
 	} else {
 		auto parts_result = connector.ListPartitions(opt.schema, opt.table_name, opt.predicate);
 		if (!parts_result.IsOk()) {
@@ -86,17 +85,14 @@ MetastoreScanPlan PlanScan(ClientContext &context, IMetastoreConnector &connecto
 		plan.partitions = std::move(parts_result.value);
 		plan.selected_partitions = PartitionNames(table, plan.partitions);
 
-		for (auto &part : plan.partitions) {
-			AddResolvedFiles(part.location);
+		for (idx_t i = 0; i < plan.partitions.size(); i++) {
+			AddResolvedFiles(plan.partitions[i].location, i);
 		}
 
 		if (plan.files.empty()) {
-			AddResolvedFiles(table.storage_descriptor.location);
+			AddResolvedFiles(table.storage_descriptor.location, 0);
 		}
 	}
-
-	sort(plan.files.begin(), plan.files.end());
-	plan.files.erase(unique(plan.files.begin(), plan.files.end()), plan.files.end());
 
 	return plan;
 }

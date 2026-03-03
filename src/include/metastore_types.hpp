@@ -130,6 +130,7 @@ struct MetastoreExtraOptions {
 	std::string namespaces_table;
 	std::string tables_table;
 	std::string partitions_table;
+	std::string columns_table;
 };
 
 struct MetastoreCatalogConfig {
