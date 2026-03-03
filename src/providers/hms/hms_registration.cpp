@@ -19,10 +19,19 @@ public:
 		config.provider = MetastoreProviderType::HMS;
 		// Reconstruct the full endpoint from ParsedUri if it's missing the scheme
 		if (uri.scheme.empty()) {
-			config.endpoint = "thrift://" + uri.authority + uri.path;
+			config.endpoint = "thrift://" + uri.authority;
 		} else {
-			config.endpoint = uri.scheme + "://" + uri.authority + uri.path;
+			config.endpoint = uri.scheme + "://" + uri.authority;
 		}
+
+		// Extract namespace from path
+		string ns = uri.path;
+		if (ns.empty() || ns == "/") {
+			ns = "default";
+		} else if (ns[0] == '/') {
+			ns = ns.substr(1);
+		}
+		config.extra_params["namespace"] = ns;
 
 		for (auto &entry : options) {
 			if (entry.first == "REGION") {
@@ -37,7 +46,12 @@ public:
 	}
 
 	duckdb::unique_ptr<IMetastoreConnector> CreateConnector(const MetastoreCatalogConfig &config) override {
-		return duckdb::make_uniq<HmsConnector>(ParseHmsEndpoint(config.endpoint));
+		string ns = "default";
+		auto it = config.extra_params.find("namespace");
+		if (it != config.extra_params.end()) {
+			ns = it->second;
+		}
+		return duckdb::make_uniq<HmsConnector>(ns, ParseHmsEndpoint(config.endpoint));
 	}
 };
 

@@ -1,4 +1,4 @@
-#include "providers/mock/mock_metastore_store.hpp"
+#include "providers/mock/mock_metastore.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/exception.hpp"
 
@@ -31,6 +31,25 @@ vector<string> MockMetastoreStore::ListSchemas() const {
 		names.push_back(s.name);
 	}
 	return names;
+}
+
+void MockMetastoreStore::DropSchema(const string &schema_name) {
+	if (!HasSchema(schema_name)) {
+		return;
+	}
+	auto s_idx = schema_idx[L(schema_name)];
+	state.schemas.erase(state.schemas.begin() + static_cast<ptrdiff_t>(s_idx));
+
+	// Clear entries from table_idx that belong to this schema
+	for (auto it = table_idx.begin(); it != table_idx.end();) {
+		if (it->first.schema == L(schema_name)) {
+			it = table_idx.erase(it);
+		} else {
+			++it;
+		}
+	}
+
+	RebuildSchemaIndex();
 }
 
 void MockMetastoreStore::CreateTable(const string &schema_name, MockTable table) {

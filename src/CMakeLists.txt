@@ -17,11 +17,11 @@ add_library(
   providers/hms/hms_config.cpp
   providers/hms/hms_registration.cpp
   providers/mock/mock_connector.cpp
-  providers/mock/mock_metastore_store.cpp
+  providers/mock/mock_metastore.cpp
 )
 
 target_link_libraries(metastore_src_lib PRIVATE hms_thrift_lib)
 
-set(ALL_OBJECT_FILES
-    ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:metastore_src_lib>
+set(METASTORE_EXTENSION_OBJECTS
+    $<TARGET_OBJECTS:metastore_src_lib>
     PARENT_SCOPE)

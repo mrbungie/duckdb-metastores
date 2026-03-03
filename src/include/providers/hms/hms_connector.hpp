@@ -7,21 +7,22 @@ namespace duckdb {
 
 class HmsConnector : public IMetastoreConnector {
 public:
-	explicit HmsConnector(HmsConfig config);
+	explicit HmsConnector(string bound_namespace, HmsConfig config);
 	~HmsConnector() override = default;
 
-	MetastoreResult<std::vector<MetastoreNamespace>> ListNamespaces() override;
-	MetastoreResult<std::vector<std::string>> ListTables(const std::string &namespace_name) override;
-	MetastoreResult<MetastoreTable> GetTable(const std::string &namespace_name, const std::string &table_name) override;
-	MetastoreResult<std::vector<MetastorePartitionValue>> ListPartitions(const std::string &namespace_name,
-	                                                                     const std::string &table_name,
+	string GetNamespace() override {
+		return bound_namespace_;
+	}
+
+	MetastoreResult<std::vector<std::string>> ListTables() override;
+	MetastoreResult<MetastoreTable> GetTable(const std::string &table_name) override;
+	MetastoreResult<std::vector<MetastorePartitionValue>> ListPartitions(const std::string &table_name,
 	                                                                     const std::string &predicate = "") override;
-	MetastoreResult<MetastoreTableProperties> GetTableStats(const std::string &namespace_name,
-	                                                        const std::string &table_name) override;
+	MetastoreResult<MetastoreTableProperties> GetTableStats(const std::string &table_name) override;
 
 private:
+	string bound_namespace_;
 	HmsConfig config_;
-	std::vector<std::string> namespaces_cache;
 };
 
 } // namespace duckdb

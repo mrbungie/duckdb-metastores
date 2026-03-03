@@ -42,7 +42,7 @@ INSERT INTO mock_ms_partitions VALUES
 
 # 2. Attach mock catalog using structured extra_options
 statement ok
-ATTACH 'mock:' AS ms (
+ATTACH 'mock:///main' AS ms (
   TYPE metastore,
   extra_options {
     namespaces_table: 'mock_ms_namespaces',

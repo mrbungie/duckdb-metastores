@@ -32,7 +32,11 @@ duckdb::unique_ptr<TableRef> MetastoreReplacementScan(ClientContext &context, Re
 
 	// Check if the table exists in the metastore
 	duckdb::unique_ptr<IMetastoreConnector> connector = factory->CreateConnector(*config_opt);
-	auto table_result = connector->GetTable(input.schema_name, input.table_name);
+	if (input.schema_name != connector->GetNamespace()) {
+		return nullptr;
+	}
+
+	auto table_result = connector->GetTable(input.table_name);
 	if (!table_result.IsOk()) {
 		// If not found, return nullptr so DuckDB can try other options or throw a normal "table not found"
 		return nullptr;

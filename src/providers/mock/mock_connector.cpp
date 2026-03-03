@@ -4,7 +4,7 @@
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/query_result.hpp"
 #include "duckdb/common/exception.hpp"
-#include "providers/mock/mock_metastore_store.hpp"
+#include "providers/mock/mock_metastore.hpp"
 
 namespace duckdb {
 
@@ -43,17 +43,13 @@ static unique_ptr<MaterializedQueryResult> Q(Connection &con, const string &sql)
 	return unique_ptr_cast<QueryResult, MaterializedQueryResult>(std::move(res));
 }
 
-static bool AnyRow(Connection &con, const string &table_ref) {
-	auto res = Q(con, "select 1 from " + table_ref + " limit 1");
-	return res->RowCount() > 0;
-}
-
 // using MetastoreExtraOptions from metastore_types.hpp for state pointers
 
 class MockMetastoreConnector : public IMetastoreConnector {
 private:
 	MetastoreExtraOptions ptrs;
 	MockMetastoreStore store;
+	string bound_namespace;
 
 	// minimal escaping for test usage (single quotes)
 	static string Escape(const string &s) {
@@ -145,7 +141,8 @@ private:
 	}
 
 public:
-	explicit MockMetastoreConnector(MetastoreExtraOptions ptrs_p) : ptrs(std::move(ptrs_p)) {
+	explicit MockMetastoreConnector(string ns, MetastoreExtraOptions ptrs_p)
+	    : ptrs(std::move(ptrs_p)), bound_namespace(std::move(ns)) {
 		if (ptrs.namespaces_table.empty() || ptrs.tables_table.empty() || ptrs.partitions_table.empty()) {
 			throw InvalidInputException("mock provider: missing required table pointers. "
 			                            "Provide namespaces_table, tables_table, partitions_table in ATTACH options.");
@@ -153,16 +150,21 @@ public:
 		LoadFromTables();
 	}
 
-	MetastoreResult<MetastoreTable> GetTable(const std::string &schema, const std::string &table_name) override {
+	string GetNamespace() override {
+		return bound_namespace;
+	}
+
+	MetastoreResult<MetastoreTable> GetTable(const std::string &table_name) override {
 		try {
-			if (!store.HasTable(schema, table_name)) {
-				return MetastoreResult<MetastoreTable>::Error(
-				    MetastoreErrorCode::NotFound, "mock provider: table '" + schema + "." + table_name + "' not found");
+			if (!store.HasTable(bound_namespace, table_name)) {
+				return MetastoreResult<MetastoreTable>::Error(MetastoreErrorCode::NotFound,
+				                                              "mock provider: table '" + bound_namespace + "." +
+				                                                  table_name + "' not found");
 			}
-			auto &mock_table = store.GetTable(schema, table_name);
+			auto &mock_table = store.GetTable(bound_namespace, table_name);
 			MetastoreTable out;
 			out.catalog = "mock_catalog";
-			out.namespace_name = schema;
+			out.namespace_name = bound_namespace;
 			out.name = mock_table.name;
 			out.storage_descriptor.location = mock_table.storage.location;
 
@@ -205,18 +207,20 @@ public:
 		}
 	}
 
-	MetastoreResult<std::vector<MetastorePartitionValue>>
-	ListPartitions(const std::string &schema, const std::string &table, const std::string &predicate) override {
+	MetastoreResult<std::vector<MetastorePartitionValue>> ListPartitions(const std::string &table,
+	                                                                     const std::string &predicate) override {
 		(void)predicate;
 		try {
-			if (!store.HasTable(schema, table)) {
+			if (!store.HasTable(bound_namespace, table)) {
 				return MetastoreResult<std::vector<MetastorePartitionValue>>::Success({});
 			}
-			auto partitions = store.ListPartitions(schema, table);
+			auto partitions = store.ListPartitions(bound_namespace, table);
 			std::vector<MetastorePartitionValue> out;
 			for (auto &p : partitions) {
 				MetastorePartitionValue mp;
-				mp.values = p.values;
+				for (auto &v : p.values) {
+					mp.values.push_back(v);
+				}
 				mp.location = p.location;
 				out.push_back(std::move(mp));
 			}
@@ -227,28 +231,95 @@ public:
 		}
 	}
 
-	MetastoreResult<std::vector<MetastoreNamespace>> ListNamespaces() override {
+	MetastoreResult<std::vector<std::string>> ListTables() override {
 		try {
-			auto names = store.ListSchemas();
-			std::vector<MetastoreNamespace> out;
-			for (auto &name : names) {
-				MetastoreNamespace ns;
-				ns.catalog = "mock_catalog";
-				ns.name = name;
-				out.push_back(std::move(ns));
-			}
-			return MetastoreResult<std::vector<MetastoreNamespace>>::Success(std::move(out));
-		} catch (const std::exception &ex) {
-			return MetastoreResult<std::vector<MetastoreNamespace>>::Error(MetastoreErrorCode::Transient, ex.what());
-		}
-	}
-
-	MetastoreResult<std::vector<std::string>> ListTables(const std::string &schema) override {
-		try {
-			auto names = store.ListTables(schema);
+			auto names = store.ListTables(bound_namespace);
 			return MetastoreResult<std::vector<std::string>>::Success(std::move(names));
 		} catch (const std::exception &ex) {
 			return MetastoreResult<std::vector<std::string>>::Error(MetastoreErrorCode::Transient, ex.what());
+		}
+	}
+
+	MetastoreResult<bool> CreateTable(const MetastoreTable &table) override {
+		try {
+			MockTable mt;
+			mt.name = table.name;
+			mt.storage.location = table.storage_descriptor.location;
+			switch (table.storage_descriptor.format) {
+			case MetastoreFormat::Parquet:
+				mt.storage.format = MockFormat::Parquet;
+				break;
+			case MetastoreFormat::JSON:
+				mt.storage.format = MockFormat::Json;
+				break;
+			case MetastoreFormat::CSV:
+				mt.storage.format = MockFormat::Csv;
+				break;
+			default:
+				mt.storage.format = MockFormat::Unknown;
+				break;
+			}
+
+			for (auto &col : table.storage_descriptor.columns) {
+				MockColumn mc;
+				mc.name = col.name;
+				mc.type = col.type;
+				mt.columns.push_back(std::move(mc));
+			}
+
+			for (auto &pcol : table.partition_spec.columns) {
+				MockPartitionColumn mpc;
+				mpc.name = pcol.name;
+				mpc.type = pcol.type;
+				mt.partition_spec.columns.push_back(std::move(mpc));
+			}
+
+			for (auto &prop : table.properties) {
+				mt.properties[prop.first] = prop.second;
+			}
+
+			store.CreateTable(bound_namespace, std::move(mt));
+			return MetastoreResult<bool>::Success(true);
+		} catch (const std::exception &ex) {
+			return MetastoreResult<bool>::Error(MetastoreErrorCode::Transient, ex.what());
+		}
+	}
+
+	MetastoreResult<bool> DropTable(const std::string &table_name, bool cascade = false) override {
+		try {
+			store.DropTable(bound_namespace, table_name);
+			return MetastoreResult<bool>::Success(true);
+		} catch (const std::exception &ex) {
+			return MetastoreResult<bool>::Error(MetastoreErrorCode::Transient, ex.what());
+		}
+	}
+
+	MetastoreResult<bool> AddPartition(const std::string &table_name,
+	                                   const MetastorePartitionValue &partition) override {
+		try {
+			MockPartition mp;
+			for (auto &v : partition.values) {
+				mp.values.push_back(v);
+			}
+			mp.location = partition.location;
+			store.AddPartition(bound_namespace, table_name, std::move(mp));
+			return MetastoreResult<bool>::Success(true);
+		} catch (const std::exception &ex) {
+			return MetastoreResult<bool>::Error(MetastoreErrorCode::Transient, ex.what());
+		}
+	}
+
+	MetastoreResult<bool> DropPartition(const std::string &table_name,
+	                                    const std::vector<std::string> &values) override {
+		try {
+			vector<string> duckdb_values;
+			for (auto &v : values) {
+				duckdb_values.push_back(v);
+			}
+			store.DropPartition(bound_namespace, table_name, duckdb_values);
+			return MetastoreResult<bool>::Success(true);
+		} catch (const std::exception &ex) {
+			return MetastoreResult<bool>::Error(MetastoreErrorCode::Transient, ex.what());
 		}
 	}
 };
@@ -266,6 +337,15 @@ public:
 		config.endpoint = uri.ToString();
 		config.provider = MetastoreProviderType::Unknown;
 		config.options = options;
+
+		// Extract namespace from path
+		string ns = uri.path;
+		if (ns.empty() || ns == "/") {
+			ns = "default";
+		} else if (ns[0] == '/') {
+			ns = ns.substr(1);
+		}
+		config.extra_params["namespace"] = ns;
 
 		auto it = options.find("extra_options");
 		if (it == options.end() || it->second.type().id() != LogicalTypeId::STRUCT) {
@@ -301,7 +381,12 @@ public:
 	}
 
 	duckdb::unique_ptr<IMetastoreConnector> CreateConnector(const MetastoreCatalogConfig &config) override {
-		return duckdb::make_uniq<MockMetastoreConnector>(config.extra_options);
+		string ns = "default";
+		auto it = config.extra_params.find("namespace");
+		if (it != config.extra_params.end()) {
+			ns = it->second;
+		}
+		return duckdb::make_uniq<MockMetastoreConnector>(ns, config.extra_options);
 	}
 };
 

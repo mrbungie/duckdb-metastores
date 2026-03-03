@@ -54,12 +54,6 @@ MetastoreResult<HmsClientContext> ConnectHms(const HmsConfig &config) {
 		std::shared_ptr<TTransport> transport(new TBufferedTransport(socket));
 		std::shared_ptr<TProtocol> protocol(new TBinaryProtocol(transport));
 
-		// We could configure timeout on TSocket if needed.
-		// auto tsocket = std::dynamic_pointer_cast<TSocket>(socket);
-		// tsocket->setConnTimeout(10000);
-		// tsocket->setRecvTimeout(10000);
-		// tsocket->setSendTimeout(10000);
-
 		transport->open();
 
 		HmsClientContext ctx;
@@ -152,40 +146,10 @@ std::vector<std::string> DiscoverLocalPartitionNames(const std::string &table_lo
 
 } // namespace
 
-HmsConnector::HmsConnector(HmsConfig config) : config_(std::move(config)) {
+HmsConnector::HmsConnector(string ns, HmsConfig config) : bound_namespace_(std::move(ns)), config_(std::move(config)) {
 }
 
-MetastoreResult<std::vector<MetastoreNamespace>> HmsConnector::ListNamespaces() {
-	auto conn_res = ConnectHms(config_);
-	if (!conn_res.IsOk()) {
-		return MetastoreResult<std::vector<MetastoreNamespace>>::Error(conn_res.error.code, conn_res.error.message,
-		                                                               conn_res.error.detail, conn_res.error.retryable);
-	}
-
-	std::vector<std::string> db_names;
-	try {
-		conn_res.value.client->get_all_databases(db_names);
-	} catch (const MetaException &e) {
-		return MetastoreResult<std::vector<MetastoreNamespace>>::Error(MetastoreErrorCode::Transient,
-		                                                               "HMS retrieve error", e.message, true);
-	} catch (const TException &tx) {
-		return MetastoreResult<std::vector<MetastoreNamespace>>::Error(MetastoreErrorCode::Transient,
-		                                                               "HMS network error", tx.what(), true);
-	}
-
-	namespaces_cache = db_names;
-	std::vector<MetastoreNamespace> result;
-	result.reserve(db_names.size());
-	for (const auto &name : db_names) {
-		MetastoreNamespace ns;
-		ns.name = name;
-		ns.catalog = "hms";
-		result.push_back(std::move(ns));
-	}
-	return MetastoreResult<std::vector<MetastoreNamespace>>::Success(std::move(result));
-}
-
-MetastoreResult<std::vector<std::string>> HmsConnector::ListTables(const std::string &namespace_name) {
+MetastoreResult<std::vector<std::string>> HmsConnector::ListTables() {
 	auto conn_res = ConnectHms(config_);
 	if (!conn_res.IsOk()) {
 		return MetastoreResult<std::vector<std::string>>::Error(conn_res.error.code, conn_res.error.message,
@@ -194,7 +158,7 @@ MetastoreResult<std::vector<std::string>> HmsConnector::ListTables(const std::st
 
 	std::vector<std::string> tables;
 	try {
-		conn_res.value.client->get_all_tables(tables, namespace_name);
+		conn_res.value.client->get_all_tables(tables, bound_namespace_);
 	} catch (const MetaException &e) {
 		return MetastoreResult<std::vector<std::string>>::Error(MetastoreErrorCode::Transient, "HMS retrieve error",
 		                                                        e.message, true);
@@ -206,8 +170,7 @@ MetastoreResult<std::vector<std::string>> HmsConnector::ListTables(const std::st
 	return MetastoreResult<std::vector<std::string>>::Success(std::move(tables));
 }
 
-MetastoreResult<MetastoreTable> HmsConnector::GetTable(const std::string &namespace_name,
-                                                       const std::string &table_name) {
+MetastoreResult<MetastoreTable> HmsConnector::GetTable(const std::string &table_name) {
 	auto conn_res = ConnectHms(config_);
 	if (!conn_res.IsOk()) {
 		return MetastoreResult<MetastoreTable>::Error(conn_res.error.code, conn_res.error.message,
@@ -216,7 +179,7 @@ MetastoreResult<MetastoreTable> HmsConnector::GetTable(const std::string &namesp
 
 	GetTableResult res;
 	GetTableRequest req;
-	req.__set_dbName(namespace_name);
+	req.__set_dbName(bound_namespace_);
 	req.__set_tblName(table_name);
 	try {
 		conn_res.value.client->get_table_req(res, req);
@@ -260,8 +223,8 @@ MetastoreResult<MetastoreTable> HmsConnector::GetTable(const std::string &namesp
 	}
 
 	MetastoreTableProperties properties(hms_table.parameters.begin(), hms_table.parameters.end());
-	auto mapped =
-	    HmsMapper::MapTable("hms", namespace_name, table_name, std::move(sd), std::move(p_spec), std::move(properties));
+	auto mapped = HmsMapper::MapTable("hms", bound_namespace_, table_name, std::move(sd), std::move(p_spec),
+	                                  std::move(properties));
 	if (!mapped.IsOk()) {
 		return mapped;
 	}
@@ -271,8 +234,7 @@ MetastoreResult<MetastoreTable> HmsConnector::GetTable(const std::string &namesp
 	return MetastoreResult<MetastoreTable>::Success(std::move(final_table));
 }
 
-MetastoreResult<std::vector<MetastorePartitionValue>> HmsConnector::ListPartitions(const std::string &namespace_name,
-                                                                                   const std::string &table_name,
+MetastoreResult<std::vector<MetastorePartitionValue>> HmsConnector::ListPartitions(const std::string &table_name,
                                                                                    const std::string &predicate) {
 	(void)predicate;
 
@@ -284,9 +246,8 @@ MetastoreResult<std::vector<MetastorePartitionValue>> HmsConnector::ListPartitio
 
 	std::vector<std::string> partition_names;
 	try {
-		conn_res.value.client->get_partition_names(partition_names, namespace_name, table_name, -1);
+		conn_res.value.client->get_partition_names(partition_names, bound_namespace_, table_name, -1);
 	} catch (const NoSuchObjectException &) {
-		// Ignored, we just yield an empty list
 		partition_names.clear();
 	} catch (const MetaException &e) {
 		return MetastoreResult<std::vector<MetastorePartitionValue>>::Error(MetastoreErrorCode::Transient,
@@ -296,7 +257,7 @@ MetastoreResult<std::vector<MetastorePartitionValue>> HmsConnector::ListPartitio
 		                                                                    "HMS network error", tx.what(), true);
 	}
 
-	auto table_result = GetTable(namespace_name, table_name);
+	auto table_result = GetTable(table_name);
 	if (!table_result.IsOk()) {
 		return MetastoreResult<std::vector<MetastorePartitionValue>>::Error(
 		    table_result.error.code, std::move(table_result.error.message), std::move(table_result.error.detail),
@@ -330,9 +291,8 @@ MetastoreResult<std::vector<MetastorePartitionValue>> HmsConnector::ListPartitio
 	return MetastoreResult<std::vector<MetastorePartitionValue>>::Success(std::move(result));
 }
 
-MetastoreResult<MetastoreTableProperties> HmsConnector::GetTableStats(const std::string &namespace_name,
-                                                                      const std::string &table_name) {
-	auto table_result = GetTable(namespace_name, table_name);
+MetastoreResult<MetastoreTableProperties> HmsConnector::GetTableStats(const std::string &table_name) {
+	auto table_result = GetTable(table_name);
 	if (!table_result.IsOk()) {
 		return MetastoreResult<MetastoreTableProperties>::Error(
 		    table_result.error.code, std::move(table_result.error.message), std::move(table_result.error.detail),

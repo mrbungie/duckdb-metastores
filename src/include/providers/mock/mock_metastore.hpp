@@ -112,6 +112,7 @@ public:
 	void CreateSchema(const string &schema_name);
 	bool HasSchema(const string &schema_name) const;
 	vector<string> ListSchemas() const;
+	void DropSchema(const string &schema_name);
 
 	// Table operations
 	void CreateTable(const string &schema_name, MockTable table);

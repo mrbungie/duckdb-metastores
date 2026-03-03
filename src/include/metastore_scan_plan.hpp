@@ -17,11 +17,10 @@ struct MetastoreScanPlan {
 };
 
 struct MetastorePlanOptions {
-	string schema;
 	string table_name;
 	string predicate;
-	idx_t max_partitions;
-	bool allow_expand_paths;
+	idx_t max_partitions = 100000;
+	bool allow_expand_paths = false;
 };
 
 MetastoreScanPlan PlanScan(ClientContext &context, IMetastoreConnector &connector, const MetastoreTable &table,

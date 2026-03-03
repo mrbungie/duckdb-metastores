@@ -1,7 +1,6 @@
 #include "metastore_scan_plan.hpp"
+#include "connector/metastore_connector.hpp"
 #include "metastore_utils.hpp"
-#include "duckdb/common/string_util.hpp"
-#include "duckdb/common/file_system.hpp"
 #include <algorithm>
 
 namespace duckdb {
@@ -69,9 +68,9 @@ MetastoreScanPlan PlanScan(ClientContext &context, IMetastoreConnector &connecto
 	if (!plan.is_partitioned) {
 		AddResolvedFiles(table.storage_descriptor.location, 0);
 	} else {
-		auto parts_result = connector.ListPartitions(opt.schema, opt.table_name, opt.predicate);
+		auto parts_result = connector.ListPartitions(opt.table_name, opt.predicate);
 		if (!parts_result.IsOk()) {
-			throw BinderException("Failed to list partitions for %s.%s: %s", opt.schema, opt.table_name,
+			throw BinderException("Failed to list partitions for %s.%s: %s", connector.GetNamespace(), opt.table_name,
 			                      parts_result.error.message);
 		}
 
@@ -79,7 +78,7 @@ MetastoreScanPlan PlanScan(ClientContext &context, IMetastoreConnector &connecto
 		if (plan.partitions_examined > opt.max_partitions) {
 			throw BinderException("Too many partitions (%s) for table %s.%s. Add a simple predicate on partition "
 			                      "columns or increase metastore_max_partitions.",
-			                      to_string(plan.partitions_examined), opt.schema, opt.table_name);
+			                      to_string(plan.partitions_examined), connector.GetNamespace(), opt.table_name);
 		}
 
 		plan.partitions = std::move(parts_result.value);

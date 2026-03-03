@@ -346,8 +346,13 @@ duckdb::unique_ptr<FunctionData> MetastoreReadBind(ClientContext &context, Table
 	auto bind_data = duckdb::make_uniq<MetastoreReadBindData>(catalog, schema, table_name);
 
 	bind_data->connector = CreateConnector(catalog);
+	if (schema != bind_data->connector->GetNamespace()) {
+		throw BinderException(
+		    "Metastore connector for catalog '%s' is bound to namespace '%s', but requested schema is '%s'", catalog,
+		    bind_data->connector->GetNamespace(), schema);
+	}
 
-	auto table_result = bind_data->connector->GetTable(schema, table_name);
+	auto table_result = bind_data->connector->GetTable(table_name);
 	if (!table_result.IsOk()) {
 		throw BinderException("Failed to get table metadata for %s.%s: %s", schema, table_name,
 		                      table_result.error.message);
@@ -356,7 +361,6 @@ duckdb::unique_ptr<FunctionData> MetastoreReadBind(ClientContext &context, Table
 	bind_data->is_partitioned = bind_data->table.IsPartitioned();
 
 	MetastorePlanOptions opt;
-	opt.schema = schema;
 	opt.table_name = table_name;
 	opt.predicate = "";
 	opt.max_partitions = GetMaxPartitions(context);
@@ -397,7 +401,6 @@ void MetastoreReadPushdownComplexFilter(ClientContext &context, LogicalGet &get,
 	    MetastorePartitionPredicate::FromTableFilters(bind_data.table, filter_set, get.GetColumnIds(), bind_data.names);
 
 	MetastorePlanOptions opt;
-	opt.schema = bind_data.schema;
 	opt.table_name = bind_data.table_name;
 	opt.predicate = predicate;
 	opt.max_partitions = GetMaxPartitions(context);
@@ -470,7 +473,6 @@ duckdb::unique_ptr<GlobalTableFunctionState> MetastoreReadInitGlobal(ClientConte
 
 	if (bind_data.is_partitioned && bind_data.needs_planning && bind_data.scan_files.empty()) {
 		MetastorePlanOptions opt;
-		opt.schema = bind_data.schema;
 		opt.table_name = bind_data.table_name;
 		opt.predicate = "";
 		opt.max_partitions = GetMaxPartitions(context);

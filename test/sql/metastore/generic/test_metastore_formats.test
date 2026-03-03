@@ -43,7 +43,7 @@ CREATE TABLE mock_cols(
 
 # 2. Attach Mock Catalog
 statement ok
-ATTACH 'mock:' AS ms (
+ATTACH 'mock:///main' AS ms (
   TYPE metastore,
   extra_options {
     namespaces_table: 'mock_ns',
