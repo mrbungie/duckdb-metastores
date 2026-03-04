@@ -11,6 +11,7 @@ add_library(
   metastore_scan_plan.cpp
   functions/metastore_table_info.cpp 
   functions/metastore_read.cpp
+  functions/metastore_write.cpp
   metastore_functions.cpp
   providers/hms/hms_connector.cpp
   providers/hms/hms_mapper.cpp

@@ -4,6 +4,8 @@
 
 namespace duckdb {
 
+static constexpr const idx_t METASTORE_INVALID_INDEX = idx_t(-1);
+
 MockMetastoreStore::MockMetastoreStore() {
 }
 
@@ -129,14 +131,14 @@ void MockMetastoreStore::AddPartition(const string &schema_name, const string &t
 bool MockMetastoreStore::HasPartition(const string &schema_name, const string &table_name,
                                       const vector<string> &values) const {
 	auto &tbl = GetTable(schema_name, table_name);
-	return FindPartitionIndex(tbl, values) != DConstants::INVALID_INDEX;
+	return FindPartitionIndex(tbl, values) != METASTORE_INVALID_INDEX;
 }
 
 const MockPartition &MockMetastoreStore::GetPartition(const string &schema_name, const string &table_name,
                                                       const vector<string> &values) const {
 	auto &tbl = GetTable(schema_name, table_name);
 	auto p_idx = FindPartitionIndex(tbl, values);
-	if (p_idx == DConstants::INVALID_INDEX) {
+	if (p_idx == METASTORE_INVALID_INDEX) {
 		throw InvalidInputException("mock store: partition not found");
 	}
 	return tbl.partitions[p_idx];
@@ -151,7 +153,7 @@ void MockMetastoreStore::DropPartition(const string &schema_name, const string &
                                        const vector<string> &values) {
 	auto &tbl = GetTableMutable(schema_name, table_name);
 	auto p_idx = FindPartitionIndex(tbl, values);
-	if (p_idx != DConstants::INVALID_INDEX) {
+	if (p_idx != METASTORE_INVALID_INDEX) {
 		tbl.partitions.erase(tbl.partitions.begin() + p_idx);
 	}
 }
@@ -204,7 +206,7 @@ idx_t MockMetastoreStore::FindPartitionIndex(const MockTable &tbl, const vector<
 			return i;
 		}
 	}
-	return DConstants::INVALID_INDEX;
+	return METASTORE_INVALID_INDEX;
 }
 
 } // namespace duckdb

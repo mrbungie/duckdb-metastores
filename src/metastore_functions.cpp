@@ -9,6 +9,9 @@ vector<TableFunctionSet> MetastoreFunctions::GetTableFunctions(ExtensionLoader &
 
 	functions.push_back(std::move(GetMetastoreTableInfoFunction()));
 	functions.push_back(std::move(GetMetastoreReadFunction()));
+	functions.push_back(std::move(GetMetastoreCreateTableFunction()));
+	functions.push_back(std::move(GetMetastoreCreatePartitionFunction()));
+	functions.push_back(std::move(GetMetastoreInsertFunction()));
 
 	return functions;
 }

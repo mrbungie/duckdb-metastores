@@ -18,6 +18,8 @@
 
 namespace duckdb {
 
+static constexpr const idx_t METASTORE_INVALID_INDEX = idx_t(-1);
+
 struct MetastoreReadBindData : public TableFunctionData {
 	std::string catalog;
 	std::string schema;
@@ -41,7 +43,7 @@ struct MetastoreReadBindData : public TableFunctionData {
 	mutable vector<string> names;
 
 	mutable std::unordered_map<string, idx_t> file_to_part_idx;
-	mutable idx_t filename_underlying_idx = DConstants::INVALID_INDEX;
+	mutable idx_t filename_underlying_idx = METASTORE_INVALID_INDEX;
 	mutable idx_t underlying_col_count = 0;
 
 	MetastoreReadBindData(std::string catalog_p, std::string schema_p, std::string table_name_p)
@@ -455,7 +457,7 @@ duckdb::unique_ptr<GlobalTableFunctionState> MetastoreReadInitGlobal(ClientConte
 	EnsureScanPlanned(context, bind_data);
 
 	auto gstate = duckdb::make_uniq<MetastoreReadGlobalState>();
-	gstate->filename_col_in_underlying_chunk = DConstants::INVALID_INDEX;
+	gstate->filename_col_in_underlying_chunk = METASTORE_INVALID_INDEX;
 
 	auto data_col_count = bind_data.table.storage_descriptor.columns.size();
 	auto part_cols_count = bind_data.table.partition_spec.columns.size();
@@ -463,7 +465,7 @@ duckdb::unique_ptr<GlobalTableFunctionState> MetastoreReadInitGlobal(ClientConte
 	vector<idx_t> underlying_column_ids;
 	for (idx_t i = 0; i < input.column_ids.size(); i++) {
 		auto col_id = input.column_ids[i];
-		const string &col_name = (col_id == DConstants::INVALID_INDEX) ? "filename" : bind_data.names[col_id];
+		const string &col_name = (col_id == METASTORE_INVALID_INDEX) ? "filename" : bind_data.names[col_id];
 
 		bool is_partition_col = false;
 		idx_t p_idx = 0;
@@ -476,16 +478,16 @@ duckdb::unique_ptr<GlobalTableFunctionState> MetastoreReadInitGlobal(ClientConte
 		}
 
 		if (is_partition_col) {
-			gstate->output_to_underlying_idx.push_back(DConstants::INVALID_INDEX);
+			gstate->output_to_underlying_idx.push_back(METASTORE_INVALID_INDEX);
 			gstate->output_to_partition_idx.push_back(p_idx);
 		} else {
 			gstate->output_to_underlying_idx.push_back(underlying_column_ids.size());
-			gstate->output_to_partition_idx.push_back(DConstants::INVALID_INDEX);
+			gstate->output_to_partition_idx.push_back(METASTORE_INVALID_INDEX);
 			underlying_column_ids.push_back(col_id);
 		}
 	}
 
-	if (bind_data.is_partitioned && bind_data.filename_underlying_idx != DConstants::INVALID_INDEX) {
+	if (bind_data.is_partitioned && bind_data.filename_underlying_idx != METASTORE_INVALID_INDEX) {
 		gstate->filename_col_in_underlying_chunk = underlying_column_ids.size();
 		underlying_column_ids.push_back(bind_data.filename_underlying_idx);
 	}
@@ -599,7 +601,7 @@ void MetastoreReadExecute(ClientContext &context, TableFunctionInput &data, Data
 
 	for (idx_t i = 0; i < output.ColumnCount(); i++) {
 		auto u_idx = gstate.output_to_underlying_idx[i];
-		if (u_idx != DConstants::INVALID_INDEX) {
+		if (u_idx != METASTORE_INVALID_INDEX) {
 			if (u_idx < lstate.underlying_chunk.ColumnCount()) {
 				output.data[i].Reference(lstate.underlying_chunk.data[u_idx]);
 			} else {
@@ -607,8 +609,8 @@ void MetastoreReadExecute(ClientContext &context, TableFunctionInput &data, Data
 			}
 		} else {
 			auto p_idx = gstate.output_to_partition_idx[i];
-			if (p_idx != DConstants::INVALID_INDEX &&
-			    gstate.filename_col_in_underlying_chunk != DConstants::INVALID_INDEX &&
+			if (p_idx != METASTORE_INVALID_INDEX &&
+			    gstate.filename_col_in_underlying_chunk != METASTORE_INVALID_INDEX &&
 			    gstate.filename_col_in_underlying_chunk < lstate.underlying_chunk.ColumnCount()) {
 				auto &filename_col = lstate.underlying_chunk.data[gstate.filename_col_in_underlying_chunk];
 				auto &dest = output.data[i];

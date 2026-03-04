@@ -12,6 +12,11 @@ public:
 private:
 	static TableFunctionSet GetMetastoreTableInfoFunction();
 	static TableFunctionSet GetMetastoreReadFunction();
+
+	// Write functions
+	static TableFunctionSet GetMetastoreCreateTableFunction();
+	static TableFunctionSet GetMetastoreCreatePartitionFunction();
+	static TableFunctionSet GetMetastoreInsertFunction();
 };
 
 } // namespace duckdb
