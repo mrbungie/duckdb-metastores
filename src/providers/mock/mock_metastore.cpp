@@ -113,7 +113,7 @@ void MockMetastoreStore::DropTable(const string &schema_name, const string &tabl
 	auto t_pos = table_idx[key];
 
 	auto &schema = state.schemas[s_idx];
-	schema.tables.erase(schema.tables.begin() + t_pos);
+	schema.tables.erase(schema.tables.begin() + static_cast<ptrdiff_t>(t_pos));
 	RebuildTableIndex(schema_name);
 }
 
@@ -154,7 +154,7 @@ void MockMetastoreStore::DropPartition(const string &schema_name, const string &
 	auto &tbl = GetTableMutable(schema_name, table_name);
 	auto p_idx = FindPartitionIndex(tbl, values);
 	if (p_idx != METASTORE_INVALID_INDEX) {
-		tbl.partitions.erase(tbl.partitions.begin() + p_idx);
+		tbl.partitions.erase(tbl.partitions.begin() + static_cast<ptrdiff_t>(p_idx));
 	}
 }
 

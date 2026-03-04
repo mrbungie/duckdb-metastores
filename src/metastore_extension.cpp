@@ -25,8 +25,6 @@ static void LoadInternal(ExtensionLoader &loader) {
 	                          LogicalType::BIGINT, Value::BIGINT(100000));
 
 	// Register functions
-	// We need a context or something to register functions?
-	// ExtensionLoader::RegisterFunction just takes the name and some pointers.
 	// Iceberg Table Functions
 	for (auto &fun : MetastoreFunctions::GetTableFunctions(loader)) {
 		loader.RegisterFunction(std::move(fun));

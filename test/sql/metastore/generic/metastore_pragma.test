@@ -1,0 +1,62 @@
+# name: test/sql/metastore/generic/metastore_pragma.test
+# description: verify metastore write pragmas via CALL
+# group: [generic]
+
+require metastore
+
+require parquet
+
+# Create the tables required by the mock provider
+statement ok
+CREATE TABLE namespaces(name VARCHAR);
+
+statement ok
+CREATE TABLE tables(schema_name VARCHAR, table_name VARCHAR, location VARCHAR, format VARCHAR, partition_key VARCHAR);
+
+statement ok
+CREATE TABLE partitions(schema_name VARCHAR, table_name VARCHAR, part_value VARCHAR, location VARCHAR);
+
+statement ok
+CREATE TABLE columns(schema_name VARCHAR, table_name VARCHAR, column_name VARCHAR, column_type VARCHAR, column_index INTEGER);
+
+# Add a default namespace
+statement ok
+INSERT INTO namespaces VALUES ('default');
+
+# Attach the mock catalog
+statement ok
+ATTACH 'mock://local' AS mock (
+  TYPE metastore,
+  extra_options {
+    namespaces_table: 'namespaces',
+    tables_table: 'tables',
+    partitions_table: 'partitions',
+    columns_table: 'columns'
+  }
+);
+
+# 1. Use CALL to create a non-partitioned table
+statement ok
+CALL metastore_create_table('mock', 'default', 'local_table',
+    location='/tmp/local_table_test.parquet',
+    columns={'id': 'BIGINT', 'name': 'VARCHAR'}
+);
+
+# Use CALL to insert data
+statement ok
+CREATE TABLE local_source (id BIGINT, name VARCHAR);
+
+statement ok
+INSERT INTO local_source VALUES (1, 'Alice'), (2, 'Bob');
+
+statement ok
+CALL metastore_insert('mock', 'default', 'local_table',
+    query='SELECT * FROM local_source'
+);
+
+# Verify data was inserted
+query II
+SELECT * FROM mock.default.local_table ORDER BY id;
+----
+1	Alice
+2	Bob

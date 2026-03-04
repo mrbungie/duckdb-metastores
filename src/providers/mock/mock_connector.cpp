@@ -157,6 +157,10 @@ public:
 	MetastoreResult<MetastoreTable> GetTable(const std::string &table_name) override {
 		try {
 			if (!store.HasTable(bound_namespace, table_name)) {
+				// Re-load once if not found, in case it was created by another connector instance
+				LoadFromTables();
+			}
+			if (!store.HasTable(bound_namespace, table_name)) {
 				return MetastoreResult<MetastoreTable>::Error(MetastoreErrorCode::NotFound,
 				                                              "mock provider: table '" + bound_namespace + "." +
 				                                                  table_name + "' not found");
@@ -279,6 +283,39 @@ public:
 			}
 
 			store.CreateTable(bound_namespace, std::move(mt));
+
+			// Persist to underlying tables
+			auto &con = GetRuntimeConnection();
+			string fmt_str = "parquet";
+			if (table.storage_descriptor.format == MetastoreFormat::CSV) {
+				fmt_str = "csv";
+			} else if (table.storage_descriptor.format == MetastoreFormat::JSON) {
+				fmt_str = "json";
+			}
+
+			string pkeys;
+			for (idx_t i = 0; i < table.partition_spec.columns.size(); i++) {
+				if (i > 0) {
+					pkeys += ",";
+				}
+				pkeys += table.partition_spec.columns[i].name;
+			}
+
+			string tbl_sql = "INSERT INTO " + ptrs.tables_table + " VALUES ('" + Escape(bound_namespace) + "', '" +
+			                 Escape(table.name) + "', '" + Escape(table.storage_descriptor.location) + "', '" +
+			                 fmt_str + "', '" + Escape(pkeys) + "')";
+			Q(con, tbl_sql);
+
+			if (!ptrs.columns_table.empty()) {
+				for (idx_t i = 0; i < table.storage_descriptor.columns.size(); i++) {
+					auto &col = table.storage_descriptor.columns[i];
+					string col_sql = "INSERT INTO " + ptrs.columns_table + " VALUES ('" + Escape(bound_namespace) +
+					                 "', '" + Escape(table.name) + "', '" + Escape(col.name) + "', '" +
+					                 Escape(col.type) + "', " + std::to_string(i) + ")";
+					Q(con, col_sql);
+				}
+			}
+
 			return MetastoreResult<bool>::Success(true);
 		} catch (const std::exception &ex) {
 			return MetastoreResult<bool>::Error(MetastoreErrorCode::Transient, ex.what());
@@ -303,6 +340,20 @@ public:
 			}
 			mp.location = partition.location;
 			store.AddPartition(bound_namespace, table_name, std::move(mp));
+
+			// Persist to underlying tables
+			auto &con = GetRuntimeConnection();
+			string pvals;
+			for (idx_t i = 0; i < partition.values.size(); i++) {
+				if (i > 0) {
+					pvals += ",";
+				}
+				pvals += partition.values[i];
+			}
+			string part_sql = "INSERT INTO " + ptrs.partitions_table + " VALUES ('" + Escape(bound_namespace) + "', '" +
+			                  Escape(table_name) + "', '" + Escape(pvals) + "', '" + Escape(partition.location) + "')";
+			Q(con, part_sql);
+
 			return MetastoreResult<bool>::Success(true);
 		} catch (const std::exception &ex) {
 			return MetastoreResult<bool>::Error(MetastoreErrorCode::Transient, ex.what());

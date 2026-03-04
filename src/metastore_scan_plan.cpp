@@ -53,9 +53,14 @@ MetastoreScanPlan PlanScan(ClientContext &context, IMetastoreConnector &connecto
 		if (FileSystem::HasGlob(path)) {
 			try {
 				auto expanded = fs.GlobFiles(path, context);
-				for (auto &file : expanded) {
-					plan.files.push_back(file.path);
+				if (expanded.empty()) {
+					plan.files.push_back(path);
 					plan.file_partition_indices.push_back(part_idx);
+				} else {
+					for (auto &file : expanded) {
+						plan.files.push_back(file.path);
+						plan.file_partition_indices.push_back(part_idx);
+					}
 				}
 			} catch (...) {
 				plan.files.push_back(path);
