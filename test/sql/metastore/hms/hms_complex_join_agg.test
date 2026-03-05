@@ -1,0 +1,48 @@
+# name: test/sql/metastore/hms/hms_complex_join_agg.test
+# description: Complex join and aggregation over HMS metadata-backed fixtures
+# group: [hms]
+
+require metastore
+
+require-env HMS_LOCAL_ENDPOINT
+
+test-env HMS_LOCAL_ENDPOINT 127.0.0.1:9083
+
+statement ok
+ATTACH 'thrift://${HMS_LOCAL_ENDPOINT}/metastore_ci' AS hmsci (TYPE metastore);
+
+query IIII
+WITH info AS (
+  SELECT 'fixture_tbl_1' AS tbl, 'base' AS bucket FROM metastore_table_info('hmsci', 'metastore_ci', 'fixture_tbl_1')
+  UNION ALL
+  SELECT 'fixture_tbl_2' AS tbl, 'base' AS bucket FROM metastore_table_info('hmsci', 'metastore_ci', 'fixture_tbl_2')
+  UNION ALL
+  SELECT 'fixture_tbl_3' AS tbl, 'base' AS bucket FROM metastore_table_info('hmsci', 'metastore_ci', 'fixture_tbl_3')
+  UNION ALL
+  SELECT 'fixture_tbl_4' AS tbl, 'base' AS bucket FROM metastore_table_info('hmsci', 'metastore_ci', 'fixture_tbl_4')
+  UNION ALL
+  SELECT 'fixture_tbl_5' AS tbl, 'base' AS bucket FROM metastore_table_info('hmsci', 'metastore_ci', 'fixture_tbl_5')
+  UNION ALL
+  SELECT 'fixture_tbl_partitioned' AS tbl, 'partitioned' AS bucket FROM metastore_table_info('hmsci', 'metastore_ci', 'fixture_tbl_partitioned')
+  UNION ALL
+  SELECT 'fixture_tbl_partitioned_parquet' AS tbl, 'partitioned' AS bucket FROM metastore_table_info('hmsci', 'metastore_ci', 'fixture_tbl_partitioned_parquet')
+  UNION ALL
+  SELECT 'fixture_tbl_partitioned_json' AS tbl, 'partitioned' AS bucket FROM metastore_table_info('hmsci', 'metastore_ci', 'fixture_tbl_partitioned_json')
+), pairs AS (
+  SELECT a.tbl AS left_tbl, b.tbl AS right_tbl, a.bucket
+  FROM info a
+  JOIN info b ON a.bucket = b.bucket AND a.tbl <= b.tbl
+), agg AS (
+  SELECT bucket, count(*) AS pair_cnt, count(DISTINCT left_tbl || ':' || right_tbl) AS uniq_pair_cnt
+  FROM pairs
+  GROUP BY 1
+), ranked AS (
+  SELECT bucket, pair_cnt, uniq_pair_cnt, dense_rank() OVER (ORDER BY pair_cnt DESC, bucket) AS density_rank
+  FROM agg
+)
+SELECT bucket, pair_cnt, uniq_pair_cnt, density_rank
+FROM ranked
+ORDER BY density_rank, bucket;
+----
+base	15	15	1
+partitioned	6	6	2

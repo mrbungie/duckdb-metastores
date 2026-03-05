@@ -621,7 +621,9 @@ static void BindUnderlyingFunction(ClientContext &context, const MetastoreReadBi
 		append_scan_target(bind_data.table.storage_descriptor.location);
 	} else {
 		for (auto &file : bind_data.scan_files) {
-			append_scan_target(file);
+			if (!is_ignored_file(file)) {
+				file_list.push_back(Value(file));
+			}
 		}
 	}
 
