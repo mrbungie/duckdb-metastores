@@ -1,0 +1,150 @@
+# name: test/sql/metastore/generic/metastore_joins.test
+# description: verify joins across multiple partitioned metastore tables
+# group: [generic]
+
+require metastore
+
+require parquet
+
+# --- SETUP MOCK ---
+statement ok
+CREATE TABLE mock_join_ns(name VARCHAR);
+
+statement ok
+CREATE TABLE mock_join_tbl(schema_name VARCHAR, table_name VARCHAR, location VARCHAR, format VARCHAR, partition_key VARCHAR);
+
+statement ok
+CREATE TABLE mock_join_part(schema_name VARCHAR, table_name VARCHAR, part_value VARCHAR, location VARCHAR);
+
+statement ok
+CREATE TABLE mock_join_col(schema_name VARCHAR, table_name VARCHAR, column_name VARCHAR, column_type VARCHAR, column_index INTEGER);
+
+statement ok
+INSERT INTO mock_join_ns VALUES ('default');
+
+statement ok
+ATTACH 'mock://joins' AS joins (
+  TYPE metastore,
+  extra_options {
+    namespaces_table: 'mock_join_ns',
+    tables_table: 'mock_join_tbl',
+    partitions_table: 'mock_join_part',
+    columns_table: 'mock_join_col'
+  }
+);
+
+# --- CREATE 3 PARTITIONED TABLES ---
+statement ok
+CALL metastore_create_table('joins', 'default', 'orders',
+    location='joins_orders_data/',
+    columns={'order_id': 'INTEGER', 'customer_id': 'INTEGER', 'amount': 'INTEGER'},
+    partitions={'region': 'VARCHAR'}
+);
+
+statement ok
+CALL metastore_create_table('joins', 'default', 'customers',
+    location='joins_customers_data/',
+    columns={'customer_id': 'INTEGER', 'tier': 'VARCHAR'},
+    partitions={'region': 'VARCHAR'}
+);
+
+statement ok
+CALL metastore_create_table('joins', 'default', 'shipments',
+    location='joins_shipments_data/',
+    columns={'order_id': 'INTEGER', 'status': 'VARCHAR'},
+    partitions={'region': 'VARCHAR'}
+);
+
+# --- INSERT 10+ ROWS PER TABLE USING PRAGMAS ---
+statement ok
+CALL metastore_insert('joins', 'default', 'orders',
+    query='SELECT 1 AS order_id, 101 AS customer_id, 50 AS amount, ''north'' AS region
+           UNION ALL SELECT 2, 102, 75, ''north''
+           UNION ALL SELECT 3, 103, 20, ''south''
+           UNION ALL SELECT 4, 104, 40, ''south''
+           UNION ALL SELECT 5, 105, 90, ''east''
+           UNION ALL SELECT 6, 106, 60, ''east''
+           UNION ALL SELECT 7, 101, 110, ''north''
+           UNION ALL SELECT 8, 102, 130, ''south''
+           UNION ALL SELECT 9, 107, 55, ''west''
+           UNION ALL SELECT 10, 108, 70, ''west'''
+);
+
+statement ok
+CALL metastore_insert('joins', 'default', 'customers',
+    query='SELECT 101 AS customer_id, ''gold'' AS tier, ''north'' AS region
+           UNION ALL SELECT 102, ''silver'', ''north''
+           UNION ALL SELECT 103, ''bronze'', ''south''
+           UNION ALL SELECT 104, ''gold'', ''south''
+           UNION ALL SELECT 105, ''silver'', ''east''
+           UNION ALL SELECT 106, ''gold'', ''east''
+           UNION ALL SELECT 107, ''bronze'', ''west''
+           UNION ALL SELECT 108, ''silver'', ''west''
+           UNION ALL SELECT 109, ''gold'', ''north''
+           UNION ALL SELECT 110, ''bronze'', ''south'''
+);
+
+statement ok
+CALL metastore_insert('joins', 'default', 'shipments',
+    query='SELECT 1 AS order_id, ''shipped'' AS status, ''north'' AS region
+           UNION ALL SELECT 2, ''pending'', ''north''
+           UNION ALL SELECT 3, ''shipped'', ''south''
+           UNION ALL SELECT 4, ''lost'', ''south''
+           UNION ALL SELECT 5, ''shipped'', ''east''
+           UNION ALL SELECT 6, ''pending'', ''east''
+           UNION ALL SELECT 7, ''shipped'', ''north''
+           UNION ALL SELECT 8, ''returned'', ''south''
+           UNION ALL SELECT 11, ''pending'', ''west''
+           UNION ALL SELECT 12, ''shipped'', ''west'''
+);
+
+# --- INNER JOIN ACROSS 3 TABLES ---
+query III
+SELECT o.order_id, c.tier, s.status
+FROM joins.default.orders o
+JOIN joins.default.customers c
+  ON o.customer_id = c.customer_id AND o.region = c.region
+JOIN joins.default.shipments s
+  ON o.order_id = s.order_id AND o.region = s.region
+WHERE o.region = 'north'
+ORDER BY o.order_id;
+----
+1	gold	shipped
+2	silver	pending
+7	gold	shipped
+
+# --- LEFT JOIN: UNMATCHED ORDERS IN WEST ---
+query TI
+SELECT o.order_id, s.status
+FROM joins.default.orders o
+LEFT JOIN joins.default.shipments s
+  ON o.order_id = s.order_id AND o.region = s.region
+WHERE o.region = 'west'
+ORDER BY o.order_id;
+----
+9	NULL
+10	NULL
+
+# --- FULL OUTER JOIN: KEEP BOTH SIDES ---
+query ITI
+SELECT COALESCE(o.order_id, s.order_id) AS oid, o.amount, s.status
+FROM joins.default.orders o
+FULL OUTER JOIN joins.default.shipments s
+  ON o.order_id = s.order_id AND o.region = s.region
+WHERE COALESCE(o.region, s.region) = 'west'
+ORDER BY oid;
+----
+9	55	NULL
+10	70	NULL
+11	NULL	pending
+12	NULL	shipped
+
+# --- FUNCTION PREDICATE + JOIN (NON-PUSHDOWNABLE PART) ---
+query I
+SELECT count(*)
+FROM joins.default.orders o
+JOIN joins.default.customers c
+  ON o.customer_id = c.customer_id AND o.region = c.region
+WHERE lower(o.region) = 'south';
+----
+2

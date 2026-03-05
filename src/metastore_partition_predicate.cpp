@@ -106,13 +106,8 @@ std::string MetastorePartitionPredicate::FromTableFilters(const MetastoreTable &
 	bool first = true;
 
 	for (auto &entry : filter_set.filters) {
-		idx_t filter_idx = entry.first; // This is the index into column_ids
+		idx_t column_id = entry.first;
 		auto &filter = *entry.second;
-
-		if (filter_idx >= column_ids.size()) {
-			continue;
-		}
-		idx_t column_id = column_ids[filter_idx].GetPrimaryIndex();
 
 		if (column_id >= names.size()) {
 			continue;
