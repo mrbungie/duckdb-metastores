@@ -70,7 +70,7 @@ std::string MetastoreUtils::NormalizeLocation(const std::string &location) {
 	while (res.size() > 1 && res.back() == '/') {
 		res.pop_back();
 	}
-	return StringUtil::Lower(res);
+	return res;
 }
 
 } // namespace duckdb
