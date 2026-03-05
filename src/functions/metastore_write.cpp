@@ -66,7 +66,7 @@ static duckdb::unique_ptr<GlobalTableFunctionState> MetastoreWriteInitGlobal(Cli
                                                                              TableFunctionInitInput &input) {
 	auto &bind_data = input.bind_data->Cast<MetastoreWriteBindData>();
 	auto gstate = duckdb::make_uniq<MetastoreWriteGlobalState>();
-	gstate->connector = CreateConnector(bind_data.catalog);
+	gstate->connector = CreateConnector(bind_data.catalog, bind_data.schema);
 	return std::move(gstate);
 }
 

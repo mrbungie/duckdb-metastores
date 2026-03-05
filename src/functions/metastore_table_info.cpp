@@ -85,12 +85,7 @@ static void MetastoreTableInfoExecute(ClientContext &context, TableFunctionInput
 	}
 	auto &bind_data = data.bind_data->Cast<MetastoreTableInfoBindData>();
 
-	duckdb::unique_ptr<IMetastoreConnector> connector = CreateConnector(bind_data.catalog);
-	if (bind_data.schema != connector->GetNamespace()) {
-		output.SetCardinality(0);
-		gstate.finished = true;
-		return;
-	}
+	duckdb::unique_ptr<IMetastoreConnector> connector = CreateConnector(bind_data.catalog, bind_data.schema);
 
 	auto table_result = connector->GetTable(bind_data.table_name);
 	if (!table_result.IsOk()) {

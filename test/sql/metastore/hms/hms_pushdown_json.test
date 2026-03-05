@@ -1,5 +1,5 @@
 # name: test/sql/metastore/hms/hms_pushdown_json.test
-# description: end to end test of partition pushdown against a live HMS json table
+# description: end to end test of partition pushdown against a live HMS table
 # group: [hms]
 
 require metastore
@@ -14,6 +14,6 @@ statement ok
 ATTACH 'thrift://${HMS_LOCAL_ENDPOINT}' AS hms (TYPE metastore);
 
 query II
-SELECT year, value FROM hms.metastore_ci.fixture_tbl_partitioned_json WHERE year='2023';
+SELECT year, value FROM hms.metastore_ci.fixture_tbl_partitioned WHERE year='2023';
 ----
-2023	old_json
+2023	old

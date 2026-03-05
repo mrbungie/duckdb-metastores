@@ -45,7 +45,7 @@ MetastoreFormat DetectFromPattern(const std::optional<std::string> &field) {
 	if (ContainsAny(lower, {"orcinputformat", "orc"})) {
 		return MetastoreFormat::ORC;
 	}
-	if (ContainsAny(lower, {"textinputformat", "csv", "text"})) {
+	if (ContainsAny(lower, {"csv"})) {
 		return MetastoreFormat::CSV;
 	}
 	return MetastoreFormat::Unknown;
@@ -77,18 +77,37 @@ MetastoreFormat HmsMapper::DetectFormat(const MetastoreStorageDescriptor &sd) {
 	if (sd.format != MetastoreFormat::Unknown) {
 		return sd.format;
 	}
+	auto serde_format = DetectFromSerde(sd.serde_class);
+	auto serde_format_param = sd.serde_parameters.find("serialization.format");
+	auto field_delim_param = sd.serde_parameters.find("field.delim");
+	if (serde_format == MetastoreFormat::Unknown) {
+		if (serde_format_param != sd.serde_parameters.end() && serde_format_param->second == "1") {
+			return MetastoreFormat::JSON;
+		}
+		if (field_delim_param != sd.serde_parameters.end()) {
+			return MetastoreFormat::CSV;
+		}
+	}
 
 	auto input_format = DetectFromPattern(sd.input_format);
 	if (input_format != MetastoreFormat::Unknown) {
+		if (input_format == MetastoreFormat::CSV && serde_format != MetastoreFormat::Unknown &&
+		    serde_format != MetastoreFormat::CSV) {
+			return serde_format;
+		}
 		return input_format;
 	}
 
 	auto output_format = DetectFromPattern(sd.output_format);
 	if (output_format != MetastoreFormat::Unknown) {
+		if (output_format == MetastoreFormat::CSV && serde_format != MetastoreFormat::Unknown &&
+		    serde_format != MetastoreFormat::CSV) {
+			return serde_format;
+		}
 		return output_format;
 	}
 
-	return DetectFromSerde(sd.serde_class);
+	return serde_format;
 }
 
 MetastoreResult<MetastoreTable> HmsMapper::MapTable(const std::string &catalog, const std::string &namespace_name,

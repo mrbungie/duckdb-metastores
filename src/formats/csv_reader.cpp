@@ -21,7 +21,11 @@ named_parameter_map_t CsvFormatReader::BuildNamedParameters(const MetastoreStora
 		serde_it = sd.serde_parameters.find("serialization.format");
 	}
 	if (serde_it != sd.serde_parameters.end() && !serde_it->second.empty()) {
-		AddNamedParameter(params, "delim", Value(serde_it->second));
+		auto delimiter = serde_it->second;
+		if (serde_it->first == "serialization.format" && delimiter == "1") {
+			delimiter = std::string(1, '\x01');
+		}
+		AddNamedParameter(params, "delim", Value(delimiter));
 	}
 	if (!sd.columns.empty()) {
 		child_list_t<Value> column_types;

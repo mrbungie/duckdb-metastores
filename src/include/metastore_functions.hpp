@@ -12,6 +12,9 @@ public:
 private:
 	static TableFunctionSet GetMetastoreTableInfoFunction();
 	static TableFunctionSet GetMetastoreReadFunction();
+	static TableFunctionSet GetMetastoreParquetScanFunction();
+	static TableFunctionSet GetMetastoreCsvScanFunction();
+	static TableFunctionSet GetMetastoreJsonScanFunction();
 
 	// Write functions
 	static TableFunctionSet GetMetastoreCreateTableFunction();

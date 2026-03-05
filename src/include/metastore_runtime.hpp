@@ -25,6 +25,8 @@ public:
 	static Connection &GetConnection();
 };
 
-duckdb::unique_ptr<IMetastoreConnector> CreateConnector(const std::string &catalog_name);
+duckdb::unique_ptr<IMetastoreConnector> CreateConnector(const std::string &catalog_name,
+                                                        const std::optional<std::string> &namespace_override =
+                                                            std::nullopt);
 
 } // namespace duckdb

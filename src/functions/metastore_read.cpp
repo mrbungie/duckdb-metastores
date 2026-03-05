@@ -53,19 +53,22 @@ struct MetastoreReadBindData : public TableFunctionData {
 	mutable std::unordered_map<string, idx_t> file_to_part_idx;
 	mutable idx_t filename_underlying_idx = METASTORE_INVALID_INDEX;
 	mutable idx_t underlying_col_count = 0;
+	std::optional<MetastoreFormat> forced_format;
 
-	MetastoreReadBindData(std::string catalog_p, std::string schema_p, std::string table_name_p)
+	MetastoreReadBindData(std::string catalog_p, std::string schema_p, std::string table_name_p,
+	                     std::optional<MetastoreFormat> forced_format_p = std::nullopt)
 	    : catalog(std::move(catalog_p)), schema(std::move(schema_p)), table_name(std::move(table_name_p)),
-	      is_partitioned(false), needs_planning(false) {
+	      is_partitioned(false), needs_planning(false), forced_format(forced_format_p) {
 	}
 
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = other_p.Cast<MetastoreReadBindData>();
-		return catalog == other.catalog && schema == other.schema && table_name == other.table_name;
+		return catalog == other.catalog && schema == other.schema && table_name == other.table_name &&
+		       forced_format == other.forced_format;
 	}
 
 	duckdb::unique_ptr<FunctionData> Copy() const override {
-		auto copy = duckdb::make_uniq<MetastoreReadBindData>(catalog, schema, table_name);
+		auto copy = duckdb::make_uniq<MetastoreReadBindData>(catalog, schema, table_name, forced_format);
 		copy->table = table;
 
 		copy->selected_partitions = selected_partitions;
@@ -85,9 +88,23 @@ struct MetastoreReadBindData : public TableFunctionData {
 		copy->file_to_part_idx = file_to_part_idx;
 		copy->filename_underlying_idx = filename_underlying_idx;
 		copy->underlying_col_count = underlying_col_count;
+		copy->forced_format = forced_format;
 		return std::move(copy);
 	}
 };
+
+static const char *ScanFunctionName(MetastoreFormat format) {
+	switch (format) {
+	case MetastoreFormat::Parquet:
+		return "metastore_parquet_scan";
+	case MetastoreFormat::CSV:
+		return "metastore_csv_scan";
+	case MetastoreFormat::JSON:
+		return "metastore_json_scan";
+	default:
+		return "metastore_read";
+	}
+}
 
 // Helpers moved to metastore_scan_plan.cpp
 
@@ -141,6 +158,60 @@ static bool GetNameIndex(const vector<string> &names, const string &name, idx_t 
 		}
 	}
 	return false;
+}
+
+static duckdb::unique_ptr<TableFilterSet>
+BuildUnderlyingFilterSet(const MetastoreReadBindData &bind_data, const vector<column_t> &input_column_ids,
+                         const optional_ptr<TableFilterSet> input_filters, const vector<idx_t> &underlying_column_ids) {
+	if (!input_filters) {
+		return nullptr;
+	}
+
+	auto result = duckdb::make_uniq<TableFilterSet>();
+	for (auto &entry : input_filters->filters) {
+		auto output_filter_idx = entry.first;
+		if (output_filter_idx >= input_column_ids.size()) {
+			continue;
+		}
+		auto col_id = input_column_ids[output_filter_idx];
+		if (col_id == METASTORE_INVALID_INDEX || col_id >= bind_data.names.size()) {
+			continue;
+		}
+
+		const auto &col_name = bind_data.names[col_id];
+		if (IsPartitionColumnName(bind_data.table, col_name)) {
+			continue;
+		}
+
+		idx_t underlying_col_id = METASTORE_INVALID_INDEX;
+		for (idx_t u = 0; u < bind_data.underlying_names.size(); u++) {
+			if (bind_data.underlying_names[u] == col_name) {
+				underlying_col_id = u;
+				break;
+			}
+		}
+		if (underlying_col_id == METASTORE_INVALID_INDEX) {
+			continue;
+		}
+
+		idx_t projected_underlying_idx = METASTORE_INVALID_INDEX;
+		for (idx_t i = 0; i < underlying_column_ids.size(); i++) {
+			if (underlying_column_ids[i] == underlying_col_id) {
+				projected_underlying_idx = i;
+				break;
+			}
+		}
+		if (projected_underlying_idx == METASTORE_INVALID_INDEX) {
+			continue;
+		}
+
+		result->filters[projected_underlying_idx] = entry.second->Copy();
+	}
+
+	if (result->filters.empty()) {
+		return nullptr;
+	}
+	return result;
 }
 
 static bool RewriteLocalPartitionFilter(unique_ptr<Expression> &expr, const LogicalGet &get,
@@ -494,7 +565,18 @@ static void EnsurePartitionColumnsInSchema(const MetastoreReadBindData &bind_dat
 
 
 static void BindUnderlyingFunction(ClientContext &context, const MetastoreReadBindData &bind_data) {
-	auto &reader = GetFormatReader(bind_data.table.storage_descriptor.format);
+	auto selected_format = bind_data.table.storage_descriptor.format;
+	if (bind_data.forced_format.has_value()) {
+		if (selected_format != bind_data.forced_format.value()) {
+			throw BinderException("%s can only bind %s tables (got %s)",
+			                      ScanFunctionName(bind_data.forced_format.value()),
+			                      MetastoreFormatToString(bind_data.forced_format.value()),
+			                      MetastoreFormatToString(selected_format));
+		}
+		selected_format = bind_data.forced_format.value();
+	}
+
+	auto &reader = GetFormatReader(selected_format);
 	if (!reader.GetRequiredExtension().empty()) {
 		Catalog::TryAutoLoad(context, reader.GetRequiredExtension());
 	}
@@ -507,11 +589,39 @@ static void BindUnderlyingFunction(ClientContext &context, const MetastoreReadBi
 	    func_catalog.functions.GetFunctionByArguments(context, {LogicalType::LIST(LogicalType::VARCHAR)});
 
 	vector<Value> file_list;
+	auto &fs = FileSystem::GetFileSystem(context);
+	auto is_ignored_file = [](const string &file_path) {
+		auto slash_pos = file_path.find_last_of("/\\");
+		auto file_name = slash_pos == string::npos ? file_path : file_path.substr(slash_pos + 1);
+		return StringUtil::StartsWith(file_name, ".") || StringUtil::StartsWith(file_name, "_") ||
+		       StringUtil::EndsWith(file_name, ".crc");
+	};
+	auto append_scan_target = [&](const string &raw_location) {
+		auto scan_path = reader.BuildScanPath(raw_location);
+		if (scan_path.empty()) {
+			return;
+		}
+		if (FileSystem::HasGlob(scan_path)) {
+			auto expanded = fs.GlobFiles(scan_path, context, FileGlobOptions::ALLOW_EMPTY);
+			for (auto &file : expanded) {
+				if (!is_ignored_file(file.path)) {
+					file_list.push_back(Value(file.path));
+				}
+			}
+			if (!expanded.empty()) {
+				return;
+			}
+		}
+		if (!is_ignored_file(scan_path)) {
+			file_list.push_back(Value(scan_path));
+		}
+	};
+
 	if (bind_data.scan_files.empty()) {
-		file_list.push_back(Value(reader.BuildScanPath(bind_data.table.storage_descriptor.location)));
+		append_scan_target(bind_data.table.storage_descriptor.location);
 	} else {
 		for (auto &file : bind_data.scan_files) {
-			file_list.push_back(Value(file));
+			append_scan_target(file);
 		}
 	}
 
@@ -600,24 +710,22 @@ static void BindUnderlyingFunction(ClientContext &context, const MetastoreReadBi
 	}
 }
 
-duckdb::unique_ptr<FunctionData> MetastoreReadBind(ClientContext &context, TableFunctionBindInput &input,
-                                                   vector<LogicalType> &return_types, vector<string> &names) {
+static duckdb::unique_ptr<FunctionData> MetastoreReadBindInternal(ClientContext &context, TableFunctionBindInput &input,
+                                                                  vector<LogicalType> &return_types,
+                                                                  vector<string> &names,
+                                                                  std::optional<MetastoreFormat> forced_format,
+                                                                  const string &function_name) {
 	if (input.inputs.size() < 3) {
-		throw BinderException("metastore_read requires at least 3 arguments: catalog, schema, table_name");
+		throw BinderException("%s requires at least 3 arguments: catalog, schema, table_name", function_name);
 	}
 
 	auto catalog = input.inputs[0].GetValue<std::string>();
 	auto schema = input.inputs[1].GetValue<std::string>();
 	auto table_name = input.inputs[2].GetValue<std::string>();
 
-	auto bind_data = duckdb::make_uniq<MetastoreReadBindData>(catalog, schema, table_name);
+	auto bind_data = duckdb::make_uniq<MetastoreReadBindData>(catalog, schema, table_name, forced_format);
 
-	bind_data->connector = CreateConnector(catalog);
-	if (schema != bind_data->connector->GetNamespace()) {
-		throw BinderException(
-		    "Metastore connector for catalog '%s' is bound to namespace '%s', but requested schema is '%s'", catalog,
-		    bind_data->connector->GetNamespace(), schema);
-	}
+	bind_data->connector = CreateConnector(catalog, schema);
 
 	auto table_result = bind_data->connector->GetTable(table_name);
 	if (!table_result.IsOk()) {
@@ -655,6 +763,29 @@ duckdb::unique_ptr<FunctionData> MetastoreReadBind(ClientContext &context, Table
 	names = bind_data->names;
 
 	return std::move(bind_data);
+}
+
+duckdb::unique_ptr<FunctionData> MetastoreReadBind(ClientContext &context, TableFunctionBindInput &input,
+                                                   vector<LogicalType> &return_types, vector<string> &names) {
+	return MetastoreReadBindInternal(context, input, return_types, names, std::nullopt,
+	                                 "metastore_read");
+}
+
+duckdb::unique_ptr<FunctionData> MetastoreParquetScanBind(ClientContext &context, TableFunctionBindInput &input,
+                                                          vector<LogicalType> &return_types, vector<string> &names) {
+	return MetastoreReadBindInternal(context, input, return_types, names, MetastoreFormat::Parquet,
+	                                 "metastore_parquet_scan");
+}
+
+duckdb::unique_ptr<FunctionData> MetastoreCsvScanBind(ClientContext &context, TableFunctionBindInput &input,
+                                                      vector<LogicalType> &return_types, vector<string> &names) {
+	return MetastoreReadBindInternal(context, input, return_types, names, MetastoreFormat::CSV, "metastore_csv_scan");
+}
+
+duckdb::unique_ptr<FunctionData> MetastoreJsonScanBind(ClientContext &context, TableFunctionBindInput &input,
+                                                       vector<LogicalType> &return_types, vector<string> &names) {
+	return MetastoreReadBindInternal(context, input, return_types, names, MetastoreFormat::JSON,
+	                                 "metastore_json_scan");
 }
 
 void MetastoreReadPushdownComplexFilter(ClientContext &context, LogicalGet &get, FunctionData *bind_data_p,
@@ -810,6 +941,9 @@ duckdb::unique_ptr<GlobalTableFunctionState> MetastoreReadInitGlobal(ClientConte
 				continue;
 			}
 			const auto &col_name = bind_data.names[col_id];
+			if (IsPartitionColumnName(bind_data.table, col_name)) {
+				continue;
+			}
 			for (idx_t u = 0; u < bind_data.underlying_names.size(); u++) {
 				if (bind_data.underlying_names[u] != col_name) {
 					continue;
@@ -833,6 +967,8 @@ duckdb::unique_ptr<GlobalTableFunctionState> MetastoreReadInitGlobal(ClientConte
 	for (auto &id : underlying_column_ids) {
 		gstate->underlying_types.push_back(bind_data.underlying_return_types[id]);
 	}
+	gstate->underlying_filters =
+	    BuildUnderlyingFilterSet(bind_data, input.column_ids, input.filters, gstate->underlying_column_ids);
 
 	if (bind_data.underlying_function.init_global) {
 		vector<idx_t> underlying_projection_ids;
@@ -841,7 +977,7 @@ duckdb::unique_ptr<GlobalTableFunctionState> MetastoreReadInitGlobal(ClientConte
 		}
 
 		TableFunctionInitInput underlying_input(bind_data.underlying_bind_data.get(), underlying_column_ids,
-		                                        underlying_projection_ids, nullptr);
+		                                        underlying_projection_ids, gstate->underlying_filters.get());
 		gstate->underlying_state = bind_data.underlying_function.init_global(context, underlying_input);
 	}
 	return std::move(gstate);
@@ -867,7 +1003,7 @@ duckdb::unique_ptr<LocalTableFunctionState> MetastoreReadInitLocal(ExecutionCont
 		}
 
 		TableFunctionInitInput underlying_input(bind_data.underlying_bind_data.get(), gstate.underlying_column_ids,
-		                                        underlying_projection_ids, nullptr);
+		                                        underlying_projection_ids, gstate.underlying_filters.get());
 		lstate->underlying_state =
 		    bind_data.underlying_function.init_local(context, underlying_input, gstate.underlying_state.get());
 	}
@@ -998,6 +1134,42 @@ TableFunctionSet MetastoreFunctions::GetMetastoreReadFunction() {
 
 	function_set.AddFunction(func);
 
+	return function_set;
+}
+
+TableFunctionSet MetastoreFunctions::GetMetastoreParquetScanFunction() {
+	TableFunctionSet function_set("metastore_parquet_scan");
+	auto func = TableFunction({LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR}, MetastoreReadExecute,
+	                          MetastoreParquetScanBind, MetastoreReadInitGlobal, MetastoreReadInitLocal);
+	func.filter_pushdown = false;
+	func.pushdown_complex_filter = MetastoreReadPushdownComplexFilter;
+	func.projection_pushdown = true;
+	func.to_string = MetastoreReadToString;
+	function_set.AddFunction(func);
+	return function_set;
+}
+
+TableFunctionSet MetastoreFunctions::GetMetastoreCsvScanFunction() {
+	TableFunctionSet function_set("metastore_csv_scan");
+	auto func = TableFunction({LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR}, MetastoreReadExecute,
+	                          MetastoreCsvScanBind, MetastoreReadInitGlobal, MetastoreReadInitLocal);
+	func.filter_pushdown = false;
+	func.pushdown_complex_filter = MetastoreReadPushdownComplexFilter;
+	func.projection_pushdown = true;
+	func.to_string = MetastoreReadToString;
+	function_set.AddFunction(func);
+	return function_set;
+}
+
+TableFunctionSet MetastoreFunctions::GetMetastoreJsonScanFunction() {
+	TableFunctionSet function_set("metastore_json_scan");
+	auto func = TableFunction({LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR}, MetastoreReadExecute,
+	                          MetastoreJsonScanBind, MetastoreReadInitGlobal, MetastoreReadInitLocal);
+	func.filter_pushdown = false;
+	func.pushdown_complex_filter = MetastoreReadPushdownComplexFilter;
+	func.projection_pushdown = true;
+	func.to_string = MetastoreReadToString;
+	function_set.AddFunction(func);
 	return function_set;
 }
 

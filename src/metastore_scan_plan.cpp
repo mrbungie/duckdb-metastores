@@ -36,6 +36,13 @@ MetastoreScanPlan PlanScan(ClientContext &context, IMetastoreConnector &connecto
 	auto &reader = GetFormatReader(table.storage_descriptor.format);
 
 	auto AddResolvedFiles = [&](const string &raw_path, idx_t part_idx) {
+		auto IsIgnoredFile = [](const string &file_path) {
+			auto slash_pos = file_path.find_last_of("/\\");
+			auto file_name = slash_pos == string::npos ? file_path : file_path.substr(slash_pos + 1);
+			return StringUtil::StartsWith(file_name, ".") || StringUtil::StartsWith(file_name, "_") ||
+			       StringUtil::EndsWith(file_name, ".crc");
+		};
+
 		auto path = reader.BuildScanPath(raw_path);
 		if (path.empty()) {
 			return;
@@ -52,13 +59,18 @@ MetastoreScanPlan PlanScan(ClientContext &context, IMetastoreConnector &connecto
 		if (FileSystem::HasGlob(path)) {
 			try {
 				auto expanded = fs.GlobFiles(path, context, FileGlobOptions::ALLOW_EMPTY);
+				expanded.erase(std::remove_if(expanded.begin(), expanded.end(),
+				                              [&](const auto &file) { return IsIgnoredFile(file.path); }),
+				               expanded.end());
 				if (expanded.empty()) {
 					plan.files.push_back(path);
 					plan.file_partition_indices.push_back(part_idx);
 				} else {
 					for (auto &file : expanded) {
-						plan.files.push_back(file.path);
-						plan.file_partition_indices.push_back(part_idx);
+						if (!IsIgnoredFile(file.path)) {
+							plan.files.push_back(file.path);
+							plan.file_partition_indices.push_back(part_idx);
+						}
 					}
 				}
 			} catch (...) {
@@ -66,8 +78,10 @@ MetastoreScanPlan PlanScan(ClientContext &context, IMetastoreConnector &connecto
 				plan.file_partition_indices.push_back(part_idx);
 			}
 		} else {
-			plan.files.push_back(path);
-			plan.file_partition_indices.push_back(part_idx);
+			if (!IsIgnoredFile(path)) {
+				plan.files.push_back(path);
+				plan.file_partition_indices.push_back(part_idx);
+			}
 		}
 	};
 

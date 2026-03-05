@@ -201,10 +201,15 @@ MetastoreResult<MetastoreTable> HmsConnector::GetTable(const std::string &table_
 		sd.location = hms_table.sd.location;
 		sd.input_format = hms_table.sd.inputFormat;
 		sd.output_format = hms_table.sd.outputFormat;
-		if (hms_table.sd.__isset.serdeInfo) {
+		if (!hms_table.sd.serdeInfo.serializationLib.empty()) {
 			sd.serde_class = hms_table.sd.serdeInfo.serializationLib;
-			sd.serde_parameters = std::unordered_map<std::string, std::string>(
-			    hms_table.sd.serdeInfo.parameters.begin(), hms_table.sd.serdeInfo.parameters.end());
+		}
+		sd.serde_parameters = std::unordered_map<std::string, std::string>(
+		    hms_table.sd.serdeInfo.parameters.begin(), hms_table.sd.serdeInfo.parameters.end());
+		for (const auto &entry : hms_table.sd.parameters) {
+			if (sd.serde_parameters.find(entry.first) == sd.serde_parameters.end()) {
+				sd.serde_parameters[entry.first] = entry.second;
+			}
 		}
 		for (const auto &col : hms_table.sd.cols) {
 			MetastoreColumn c;

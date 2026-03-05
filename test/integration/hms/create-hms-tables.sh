@@ -51,7 +51,7 @@ for i in $(seq 1 "${HMS_TABLE_COUNT}"); do
 	sql_payload+="INSERT INTO TABLE ${tbl} VALUES (${i}, 'v${i}');\n"
 	sql_payload+="DROP TABLE IF EXISTS ${tbl}_partitioned;\n"
 	sql_payload+="CREATE EXTERNAL TABLE ${tbl}_partitioned (id INT, value STRING) PARTITIONED BY (year STRING, month STRING) ROW FORMAT DELIMITED FIELDS TERMINATED BY ',' STORED AS TEXTFILE LOCATION 'file:${tbl_path}_part';\n"
-	sql_payload+="ALTER TABLE ${tbl}_partitioned ADD PARTITION (year='2023', month='10') LOCATION 'file:${tbl_path}_part/year=2023/month=10';\n"
+	sql_payload+="ALTER TABLE ${tbl}_partitioned ADD IF NOT EXISTS PARTITION (year='2023', month='10') LOCATION 'file:${tbl_path}_part/year=2023/month=10';\n"
 	sql_payload+="INSERT INTO TABLE ${tbl}_partitioned PARTITION(year='2023', month='10') VALUES (${i}, 'v${i}');\n"
 done
 
@@ -62,15 +62,15 @@ mkdir -p "${part_tbl_path}"
 chmod -R 0777 "${part_tbl_path}"
 sql_payload+="DROP TABLE IF EXISTS ${part_tbl};\n"
 sql_payload+="CREATE EXTERNAL TABLE ${part_tbl} (id INT, value STRING) PARTITIONED BY (year STRING, month STRING) ROW FORMAT DELIMITED FIELDS TERMINATED BY ',' STORED AS TEXTFILE LOCATION 'file:${part_tbl_path}';\n"
-sql_payload+="ALTER TABLE ${part_tbl} ADD PARTITION (year='2023', month='10') LOCATION 'file:${part_tbl_path}/year=2023/month=10';\n"
-sql_payload+="ALTER TABLE ${part_tbl} ADD PARTITION (year='2024', month='01') LOCATION 'file:${part_tbl_path}/year=2024/month=01';\n"
+sql_payload+="ALTER TABLE ${part_tbl} ADD IF NOT EXISTS PARTITION (year='2023', month='10') LOCATION 'file:${part_tbl_path}/year=2023/month=10';\n"
+sql_payload+="ALTER TABLE ${part_tbl} ADD IF NOT EXISTS PARTITION (year='2024', month='01') LOCATION 'file:${part_tbl_path}/year=2024/month=01';\n"
 sql_payload+="INSERT INTO TABLE ${part_tbl} PARTITION(year='2023', month='10') VALUES (1, 'old');\n"
 sql_payload+="INSERT INTO TABLE ${part_tbl} PARTITION(year='2024', month='01') VALUES (2, 'new');\n"
 for extra_idx in $(seq 1 8); do
 	extra_year=$((2010 + extra_idx))
 	extra_month=$(printf "%02d" "${extra_idx}")
 	extra_id=$((100 + extra_idx))
-	sql_payload+="ALTER TABLE ${part_tbl} ADD PARTITION (year='${extra_year}', month='${extra_month}') LOCATION 'file:${part_tbl_path}/year=${extra_year}/month=${extra_month}';\n"
+	sql_payload+="ALTER TABLE ${part_tbl} ADD IF NOT EXISTS PARTITION (year='${extra_year}', month='${extra_month}') LOCATION 'file:${part_tbl_path}/year=${extra_year}/month=${extra_month}';\n"
 	sql_payload+="INSERT INTO TABLE ${part_tbl} PARTITION(year='${extra_year}', month='${extra_month}') VALUES (${extra_id}, 'extra_${extra_idx}');\n"
 done
 
@@ -81,16 +81,15 @@ mkdir -p "${part_tbl_parquet_path}"
 chmod -R 0777 "${part_tbl_parquet_path}"
 sql_payload+="DROP TABLE IF EXISTS ${part_tbl_parquet};\n"
 sql_payload+="CREATE EXTERNAL TABLE ${part_tbl_parquet} (id INT, value STRING) PARTITIONED BY (year STRING, month STRING) STORED AS PARQUET LOCATION 'file:${part_tbl_parquet_path}';\n"
-sql_payload+="ALTER TABLE ${part_tbl_parquet} ADD PARTITION (year='2023', month='10') LOCATION 'file:${part_tbl_parquet_path}/year=2023/month=10';\n"
-sql_payload+="ALTER TABLE ${part_tbl_parquet} ADD PARTITION (year='2024', month='01') LOCATION 'file:${part_tbl_parquet_path}/year=2024/month=01';\n"
+sql_payload+="ALTER TABLE ${part_tbl_parquet} ADD IF NOT EXISTS PARTITION (year='2023', month='10') LOCATION 'file:${part_tbl_parquet_path}/year=2023/month=10';\n"
+sql_payload+="ALTER TABLE ${part_tbl_parquet} ADD IF NOT EXISTS PARTITION (year='2024', month='01') LOCATION 'file:${part_tbl_parquet_path}/year=2024/month=01';\n"
 sql_payload+="INSERT INTO TABLE ${part_tbl_parquet} PARTITION(year='2023', month='10') VALUES (11, 'old_parquet');\n"
 sql_payload+="INSERT INTO TABLE ${part_tbl_parquet} PARTITION(year='2024', month='01') VALUES (22, 'new_parquet');\n"
 for extra_idx in $(seq 1 8); do
 	extra_year=$((2010 + extra_idx))
 	extra_month=$(printf "%02d" "${extra_idx}")
 	extra_id=$((200 + extra_idx))
-	sql_payload+="ALTER TABLE ${part_tbl_parquet} ADD PARTITION (year='${extra_year}', month='${extra_month}') LOCATION 'file:${part_tbl_parquet_path}/year=${extra_year}/month=${extra_month}';\n"
-	sql_payload+="ALTER TABLE ${part_tbl_parquet} ADD PARTITION (year='${extra_year}', month='${extra_month}') LOCATION 'file:${part_tbl_parquet_path}/year=${extra_year}/month=${extra_month}';\n"
+	sql_payload+="ALTER TABLE ${part_tbl_parquet} ADD IF NOT EXISTS PARTITION (year='${extra_year}', month='${extra_month}') LOCATION 'file:${part_tbl_parquet_path}/year=${extra_year}/month=${extra_month}';\n"
 	sql_payload+="INSERT INTO TABLE ${part_tbl_parquet} PARTITION(year='${extra_year}', month='${extra_month}') VALUES (${extra_id}, 'extra_parquet_${extra_idx}');\n"
 done
 
@@ -101,7 +100,7 @@ mkdir -p "${part_tbl_json_path}"
 chmod -R 0777 "${part_tbl_json_path}"
 sql_payload+="DROP TABLE IF EXISTS ${part_tbl_json};\n"
 sql_payload+="CREATE EXTERNAL TABLE ${part_tbl_json} (id INT, value STRING) PARTITIONED BY (year STRING, month STRING) ROW FORMAT SERDE 'org.apache.hive.hcatalog.data.JsonSerDe' STORED AS TEXTFILE LOCATION 'file:${part_tbl_json_path}';\n"
-sql_payload+="ALTER TABLE ${part_tbl_json} ADD PARTITION (year='2023', month='10') LOCATION 'file:${part_tbl_json_path}/year=2023/month=10';\n"
+sql_payload+="ALTER TABLE ${part_tbl_json} ADD IF NOT EXISTS PARTITION (year='2023', month='10') LOCATION 'file:${part_tbl_json_path}/year=2023/month=10';\n"
 sql_payload+="INSERT INTO TABLE ${part_tbl_json} PARTITION(year='2023', month='10') VALUES (33, 'old_json');\n"
 
 printf '%b' "${sql_payload}" > "${BOOTSTRAP_SQL}"
@@ -111,5 +110,7 @@ docker compose -f "${COMPOSE_FILE}" exec -T hms-hiveserver2 \
 	bash -lc "cat > ${BOOTSTRAP_SQL}" < "${BOOTSTRAP_SQL}"
 docker compose -f "${COMPOSE_FILE}" exec -T hms-hiveserver2 \
 	bash -lc "/opt/hive/bin/beeline -u 'jdbc:hive2://127.0.0.1:10000/default' -n hive -f ${BOOTSTRAP_SQL}"
+
+find "${HMS_SHARED_DIR}/${HMS_DB_NAME}" -type f -name '*.crc' -delete >/dev/null 2>&1 || true
 
 echo "HMS Seed Data Loaded!"

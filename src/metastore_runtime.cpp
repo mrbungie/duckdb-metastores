@@ -82,13 +82,18 @@ Connection &MetastoreRuntime::GetConnection() {
 	return *state.con;
 }
 
-duckdb::unique_ptr<IMetastoreConnector> CreateConnector(const std::string &catalog_name) {
+duckdb::unique_ptr<IMetastoreConnector> CreateConnector(const std::string &catalog_name,
+                                                        const std::optional<std::string> &namespace_override) {
 	auto config_opt = LookupMetastoreAttachConfig(catalog_name);
 	if (!config_opt.has_value()) {
 		throw BinderException("Catalog is not attached as metastore, or not found: " + catalog_name);
 	}
+	auto config = config_opt.value();
+	if (namespace_override.has_value()) {
+		config.extra_params["namespace"] = namespace_override.value();
+	}
 
-	auto parsed_uri = ParsedUri::Parse(config_opt->endpoint);
+	auto parsed_uri = ParsedUri::Parse(config.endpoint);
 	auto factory = ProviderRegistry::ResolveProvider(parsed_uri);
 	if (!factory) {
 		throw BinderException("Invalid Error: Could not infer metastore provider from endpoint. Use thrift://, "
@@ -96,7 +101,7 @@ duckdb::unique_ptr<IMetastoreConnector> CreateConnector(const std::string &catal
 		                      "https://...dataproc... for Dataproc.");
 	}
 
-	return factory->CreateConnector(*config_opt);
+	return factory->CreateConnector(config);
 }
 
 } // namespace duckdb
