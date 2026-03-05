@@ -375,53 +375,20 @@ static bool EvaluatePartitionValueFilter(const string &value, const TableFilter 
 	}
 }
 
-static void PrunePartitionsByTableFilters(const MetastoreTable &table, const TableFilterSet &filter_set,
-                                          const vector<ColumnIndex> &column_ids, const vector<string> &names,
-                                          MetastoreScanPlan &plan) {
-	if (plan.partitions.empty()) {
-		return;
-	}
-
-	vector<bool> keep(plan.partitions.size(), true);
-	bool has_partition_filter = false;
-
-	for (auto &entry : filter_set.filters) {
-		auto col_id = entry.first;
-		if (col_id >= names.size()) {
-			continue;
-		}
-		const auto &col_name = names[col_id];
-
-		idx_t part_idx = METASTORE_INVALID_INDEX;
-		for (idx_t i = 0; i < table.partition_spec.columns.size(); i++) {
-			if (table.partition_spec.columns[i].name == col_name) {
-				part_idx = i;
-				break;
-			}
-		}
-		if (part_idx == METASTORE_INVALID_INDEX) {
-			continue;
-		}
-
-		has_partition_filter = true;
-		for (idx_t p = 0; p < plan.partitions.size(); p++) {
-			if (!keep[p]) {
-				continue;
-			}
-			if (part_idx >= plan.partitions[p].values.size()) {
-				keep[p] = false;
-				continue;
-			}
-			if (!EvaluatePartitionValueFilter(plan.partitions[p].values[part_idx], *entry.second)) {
-				keep[p] = false;
-			}
+//! Find the index of a column in the table's partition spec, or METASTORE_INVALID_INDEX if not a partition column.
+static idx_t FindPartitionColumnIndex(const MetastoreTable &table, const string &col_name) {
+	for (idx_t i = 0; i < table.partition_spec.columns.size(); i++) {
+		if (table.partition_spec.columns[i].name == col_name) {
+			return i;
 		}
 	}
+	return METASTORE_INVALID_INDEX;
+}
 
-	if (!has_partition_filter) {
-		return;
-	}
-
+//! Apply a boolean keep-vector to a scan plan: rebuild partitions, files, and
+//! file_partition_indices, keeping only entries where keep[i] is true.
+//! Also regenerates plan.selected_partitions from the surviving partitions.
+static void ApplyPartitionPruning(const MetastoreTable &table, const vector<bool> &keep, MetastoreScanPlan &plan) {
 	vector<idx_t> old_to_new(plan.partitions.size(), METASTORE_INVALID_INDEX);
 	vector<MetastorePartitionValue> filtered_partitions;
 	for (idx_t i = 0; i < plan.partitions.size(); i++) {
@@ -453,14 +420,74 @@ static void PrunePartitionsByTableFilters(const MetastoreTable &table, const Tab
 	plan.selected_partitions = GetPartitionNames(table, plan.partitions);
 }
 
-static void PrunePartitionsByExpressions(ClientContext &context, const MetastoreReadBindData &bind_data,
-	                                     const LogicalGet &get,
-	                                     const vector<duckdb::unique_ptr<Expression>> &filters,
-	                                     MetastoreScanPlan &plan) {
-	if (plan.partitions.empty() || filters.empty()) {
+//! Shared evaluator helper: applies partition pruning only when at least one
+//! partition is marked for removal.  Wraps ApplyPartitionPruning to avoid the
+//! cost of rebuilding plan vectors when no pruning actually occurred.
+static void EvaluateAndApplyPruning(const MetastoreTable &table, const vector<bool> &keep, MetastoreScanPlan &plan) {
+	bool any_pruned = false;
+	for (idx_t i = 0; i < keep.size(); i++) {
+		if (!keep[i]) {
+			any_pruned = true;
+			break;
+		}
+	}
+	if (!any_pruned) {
+		return;
+	}
+	ApplyPartitionPruning(table, keep, plan);
+}
+//! Evaluate table-level filters against partition values to produce a keep-vector.
+//! Returns true if any partition filter was found and applied, false otherwise.
+static bool EvaluateTableFilterKeepVector(const MetastoreTable &table, const TableFilterSet &filter_set,
+                                          const vector<string> &names, const vector<MetastorePartitionValue> &partitions,
+                                          vector<bool> &keep) {
+	bool has_partition_filter = false;
+	for (auto &entry : filter_set.filters) {
+		auto col_id = entry.first;
+		if (col_id >= names.size()) {
+			continue;
+		}
+		auto part_idx = FindPartitionColumnIndex(table, names[col_id]);
+		if (part_idx == METASTORE_INVALID_INDEX) {
+			continue;
+		}
+		has_partition_filter = true;
+		for (idx_t p = 0; p < partitions.size(); p++) {
+			if (!keep[p]) {
+				continue;
+			}
+			if (part_idx >= partitions[p].values.size()) {
+				keep[p] = false;
+				continue;
+			}
+			if (!EvaluatePartitionValueFilter(partitions[p].values[part_idx], *entry.second)) {
+				keep[p] = false;
+			}
+		}
+	}
+	return has_partition_filter;
+}
+
+static void PrunePartitionsByTableFilters(const MetastoreTable &table, const TableFilterSet &filter_set,
+                                          const vector<ColumnIndex> &column_ids, const vector<string> &names,
+                                          MetastoreScanPlan &plan) {
+	if (plan.partitions.empty()) {
 		return;
 	}
 
+	vector<bool> keep(plan.partitions.size(), true);
+	if (!EvaluateTableFilterKeepVector(table, filter_set, names, plan.partitions, keep)) {
+		return;
+	}
+
+	EvaluateAndApplyPruning(table, keep, plan);
+}
+
+//! Populate a DataChunk with partition column values for expression-based pruning.
+//! Each row in the chunk corresponds to a partition; partition columns are cast to their
+//! declared types, with nulls set on cast failure.
+static void BuildPartitionDataChunk(ClientContext &context, const MetastoreReadBindData &bind_data,
+                                    const MetastoreScanPlan &plan, DataChunk &chunk) {
 	vector<idx_t> partition_name_indices(bind_data.table.partition_spec.columns.size(), METASTORE_INVALID_INDEX);
 	for (idx_t p = 0; p < bind_data.table.partition_spec.columns.size(); p++) {
 		idx_t name_idx;
@@ -469,7 +496,6 @@ static void PrunePartitionsByExpressions(ClientContext &context, const Metastore
 		}
 	}
 
-	DataChunk chunk;
 	chunk.Initialize(context, bind_data.return_types, plan.partitions.size());
 	for (idx_t p = 0; p < plan.partitions.size(); p++) {
 		for (idx_t part_idx = 0; part_idx < bind_data.table.partition_spec.columns.size(); part_idx++) {
@@ -486,22 +512,21 @@ static void PrunePartitionsByExpressions(ClientContext &context, const Metastore
 		}
 	}
 	chunk.SetCardinality(plan.partitions.size());
+}
 
-	vector<bool> keep(plan.partitions.size(), true);
-	vector<unique_ptr<Expression>> local_partition_filters;
-	for (auto &filter : filters) {
-		AppendLocalPartitionFilters(*filter, get, bind_data, local_partition_filters);
-	}
-
+//! Evaluate expression-based partition filters against a prebuilt DataChunk and
+//! update a keep-vector.  Returns true if at least one expression was evaluated.
+static bool EvaluateExpressionKeepVector(ClientContext &context, DataChunk &chunk, idx_t partition_count,
+                                         const vector<unique_ptr<Expression>> &local_partition_filters,
+                                         vector<bool> &keep) {
 	if (local_partition_filters.empty()) {
-		return;
+		return false;
 	}
-
 	for (auto &local_filter : local_partition_filters) {
-		SelectionVector sel(plan.partitions.size());
+		SelectionVector sel(partition_count);
 		ExpressionExecutor executor(context, *local_filter);
 		auto count = executor.SelectExpression(chunk, sel);
-		vector<bool> pass(plan.partitions.size(), false);
+		vector<bool> pass(partition_count, false);
 		for (idx_t i = 0; i < count; i++) {
 			pass[sel.get_index(i)] = true;
 		}
@@ -509,36 +534,31 @@ static void PrunePartitionsByExpressions(ClientContext &context, const Metastore
 			keep[i] = keep[i] && pass[i];
 		}
 	}
+	return true;
+}
 
-	vector<idx_t> old_to_new(plan.partitions.size(), METASTORE_INVALID_INDEX);
-	vector<MetastorePartitionValue> filtered_partitions;
-	for (idx_t i = 0; i < plan.partitions.size(); i++) {
-		if (!keep[i]) {
-			continue;
-		}
-		old_to_new[i] = filtered_partitions.size();
-		filtered_partitions.push_back(std::move(plan.partitions[i]));
+static void PrunePartitionsByExpressions(ClientContext &context, const MetastoreReadBindData &bind_data,
+	                                     const LogicalGet &get,
+	                                     const vector<duckdb::unique_ptr<Expression>> &filters,
+	                                     MetastoreScanPlan &plan) {
+	if (plan.partitions.empty() || filters.empty()) {
+		return;
 	}
 
-	vector<string> filtered_files;
-	vector<idx_t> filtered_file_partition_indices;
-	for (idx_t i = 0; i < plan.files.size(); i++) {
-		auto old_idx = plan.file_partition_indices[i];
-		if (old_idx >= old_to_new.size()) {
-			continue;
-		}
-		auto new_idx = old_to_new[old_idx];
-		if (new_idx == METASTORE_INVALID_INDEX) {
-			continue;
-		}
-		filtered_files.push_back(plan.files[i]);
-		filtered_file_partition_indices.push_back(new_idx);
+	DataChunk chunk;
+	BuildPartitionDataChunk(context, bind_data, plan, chunk);
+
+	vector<bool> keep(plan.partitions.size(), true);
+	vector<unique_ptr<Expression>> local_partition_filters;
+	for (auto &filter : filters) {
+		AppendLocalPartitionFilters(*filter, get, bind_data, local_partition_filters);
 	}
 
-	plan.partitions = std::move(filtered_partitions);
-	plan.files = std::move(filtered_files);
-	plan.file_partition_indices = std::move(filtered_file_partition_indices);
-	plan.selected_partitions = GetPartitionNames(bind_data.table, plan.partitions);
+	if (!EvaluateExpressionKeepVector(context, chunk, plan.partitions.size(), local_partition_filters, keep)) {
+		return;
+	}
+
+	EvaluateAndApplyPruning(bind_data.table, keep, plan);
 }
 
 //! Ensure all partition columns are present in bind_data.names/return_types.
@@ -563,19 +583,9 @@ static void EnsurePartitionColumnsInSchema(const MetastoreReadBindData &bind_dat
 	}
 }
 
-
-static void BindUnderlyingFunction(ClientContext &context, const MetastoreReadBindData &bind_data) {
-	auto selected_format = bind_data.table.storage_descriptor.format;
-	if (bind_data.forced_format.has_value()) {
-		if (selected_format != bind_data.forced_format.value()) {
-			throw BinderException("%s can only bind %s tables (got %s)",
-			                      ScanFunctionName(bind_data.forced_format.value()),
-			                      MetastoreFormatToString(bind_data.forced_format.value()),
-			                      MetastoreFormatToString(selected_format));
-		}
-		selected_format = bind_data.forced_format.value();
-	}
-
+// Resolve the format reader and corresponding underlying table function.
+static IFormatReader &ResolveReaderFunction(ClientContext &context, const MetastoreReadBindData &bind_data,
+                                            MetastoreFormat selected_format) {
 	auto &reader = GetFormatReader(selected_format);
 	if (!reader.GetRequiredExtension().empty()) {
 		Catalog::TryAutoLoad(context, reader.GetRequiredExtension());
@@ -587,7 +597,27 @@ static void BindUnderlyingFunction(ClientContext &context, const MetastoreReadBi
 	                         .Cast<TableFunctionCatalogEntry>();
 	bind_data.underlying_function =
 	    func_catalog.functions.GetFunctionByArguments(context, {LogicalType::LIST(LogicalType::VARCHAR)});
+	return reader;
+}
 
+// Apply hidden/sidecar filtering to a list of candidate scan files.
+static void FilterIgnoredFiles(const vector<string> &input_files, vector<Value> &file_list) {
+	auto is_ignored_file = [](const string &file_path) {
+		auto slash_pos = file_path.find_last_of("/\\");
+		auto file_name = slash_pos == string::npos ? file_path : file_path.substr(slash_pos + 1);
+		return StringUtil::StartsWith(file_name, ".") || StringUtil::StartsWith(file_name, "_") ||
+		       StringUtil::EndsWith(file_name, ".crc");
+	};
+	for (auto &file : input_files) {
+		if (!is_ignored_file(file)) {
+			file_list.push_back(Value(file));
+		}
+	}
+}
+
+// Build the final file list from table location or preplanned scan files.
+static vector<Value> AssembleFileList(ClientContext &context, const MetastoreReadBindData &bind_data,
+	                                  const IFormatReader &reader) {
 	vector<Value> file_list;
 	auto &fs = FileSystem::GetFileSystem(context);
 	auto is_ignored_file = [](const string &file_path) {
@@ -620,16 +650,126 @@ static void BindUnderlyingFunction(ClientContext &context, const MetastoreReadBi
 	if (bind_data.scan_files.empty()) {
 		append_scan_target(bind_data.table.storage_descriptor.location);
 	} else {
-		for (auto &file : bind_data.scan_files) {
-			if (!is_ignored_file(file)) {
-				file_list.push_back(Value(file));
+		FilterIgnoredFiles(bind_data.scan_files, file_list);
+	}
+	return file_list;
+}
+
+// Build format-specific named parameters passed to the underlying scan bind.
+static named_parameter_map_t BuildNamedParams(const MetastoreReadBindData &bind_data, const IFormatReader &reader) {
+	return reader.BuildNamedParameters(bind_data.table.storage_descriptor, bind_data.table.partition_spec,
+	                                   bind_data.is_partitioned);
+}
+
+// Populate output schema from explicit metastore columns when available.
+static void PopulateOutputSchemaFromStorageDescriptor(const MetastoreReadBindData &bind_data) {
+	for (auto &col : bind_data.table.storage_descriptor.columns) {
+		bind_data.names.push_back(col.name);
+		bool matched = false;
+		for (idx_t i = 0; i < bind_data.underlying_names.size(); i++) {
+			if (bind_data.underlying_names[i] == col.name) {
+				bind_data.return_types.push_back(bind_data.underlying_return_types[i]);
+				matched = true;
+				break;
 			}
+		}
+		if (!matched) {
+			bind_data.return_types.push_back(
+			    TransformStringToLogicalType(MetastoreUtils::MapHiveTypeToDuckDB(col.type)));
+		}
+	}
+}
+
+// Populate output schema from underlying reader columns when storage schema is absent.
+static void PopulateOutputSchemaFromUnderlyingColumns(const MetastoreReadBindData &bind_data) {
+	for (idx_t i = 0; i < bind_data.underlying_names.size(); i++) {
+		auto &col_name = bind_data.underlying_names[i];
+		if (col_name == "filename") {
+			continue;
+		}
+		bool is_partition_col = false;
+		for (auto &part_col : bind_data.table.partition_spec.columns) {
+			if (part_col.name == col_name) {
+				is_partition_col = true;
+				break;
+			}
+		}
+		if (is_partition_col) {
+			continue;
+		}
+		bind_data.names.push_back(col_name);
+		bind_data.return_types.push_back(bind_data.underlying_return_types[i]);
+	}
+}
+
+// Build exposed output schema based on storage metadata or underlying scan columns.
+static void BuildOutputSchema(const MetastoreReadBindData &bind_data) {
+	bind_data.names.clear();
+	bind_data.return_types.clear();
+	if (!bind_data.table.storage_descriptor.columns.empty()) {
+		PopulateOutputSchemaFromStorageDescriptor(bind_data);
+	} else {
+		PopulateOutputSchemaFromUnderlyingColumns(bind_data);
+	}
+}
+
+// Bind underlying reader and derive the exposed schema and filename index.
+static void BindUnderlyingReader(ClientContext &context, TableFunctionBindInput &bind_input,
+	                             const MetastoreReadBindData &bind_data) {
+	bind_data.underlying_return_types.clear();
+	bind_data.underlying_names.clear();
+	bind_data.underlying_bind_data =
+	    bind_data.underlying_function.bind(context, bind_input, bind_data.underlying_return_types, bind_data.underlying_names);
+	bind_data.underlying_col_count = bind_data.underlying_names.size();
+
+	BuildOutputSchema(bind_data);
+
+	for (idx_t i = 0; i < bind_data.underlying_names.size(); i++) {
+		if (bind_data.underlying_names[i] == "filename") {
+			bind_data.filename_underlying_idx = i;
+			break;
 		}
 	}
 
-	auto named_parameters = reader.BuildNamedParameters(bind_data.table.storage_descriptor,
-	                                                    bind_data.table.partition_spec, bind_data.is_partitioned);
+	EnsurePartitionColumnsInSchema(bind_data);
+}
 
+// Apply legacy fallback schema behavior when underlying binding throws.
+static void HandleUnderlyingBindFailure(const MetastoreReadBindData &bind_data) {
+	bind_data.names.clear();
+	bind_data.return_types.clear();
+	if (bind_data.scan_files.empty() && bind_data.is_partitioned) {
+		for (auto &col : bind_data.table.storage_descriptor.columns) {
+			bind_data.names.push_back(col.name);
+			bind_data.return_types.push_back(
+			    TransformStringToLogicalType(MetastoreUtils::MapHiveTypeToDuckDB(col.type)));
+		}
+		for (auto &col : bind_data.table.partition_spec.columns) {
+			bind_data.names.push_back(col.name);
+			bind_data.return_types.push_back(
+			    TransformStringToLogicalType(MetastoreUtils::MapHiveTypeToDuckDB(col.type)));
+		}
+	} else {
+		throw;
+	}
+}
+
+static MetastoreFormat ResolveSelectedFormat(const MetastoreReadBindData &bind_data) {
+	auto selected_format = bind_data.table.storage_descriptor.format;
+	if (!bind_data.forced_format.has_value()) {
+		return selected_format;
+	}
+	if (selected_format != bind_data.forced_format.value()) {
+		throw BinderException("%s can only bind %s tables (got %s)", ScanFunctionName(bind_data.forced_format.value()),
+		                      MetastoreFormatToString(bind_data.forced_format.value()),
+		                      MetastoreFormatToString(selected_format));
+	}
+	return bind_data.forced_format.value();
+}
+
+static void BindUnderlyingReaderWithInputs(ClientContext &context, const MetastoreReadBindData &bind_data,
+	                                        const vector<Value> &file_list,
+	                                        named_parameter_map_t named_parameters) {
 	vector<LogicalType> input_table_types;
 	vector<string> input_table_names;
 	vector<Value> bind_inputs;
@@ -639,77 +779,19 @@ static void BindUnderlyingFunction(ClientContext &context, const MetastoreReadBi
 	                                  nullptr, bind_data.underlying_function, *table_func_ref);
 
 	try {
-		bind_data.underlying_return_types.clear();
-		bind_data.underlying_names.clear();
-		bind_data.underlying_bind_data = bind_data.underlying_function.bind(
-		    context, bind_input, bind_data.underlying_return_types, bind_data.underlying_names);
-		bind_data.underlying_col_count = bind_data.underlying_names.size();
-
-		bind_data.names.clear();
-		bind_data.return_types.clear();
-		if (!bind_data.table.storage_descriptor.columns.empty()) {
-			for (auto &col : bind_data.table.storage_descriptor.columns) {
-				bind_data.names.push_back(col.name);
-				bool matched = false;
-				for (idx_t i = 0; i < bind_data.underlying_names.size(); i++) {
-					if (bind_data.underlying_names[i] == col.name) {
-						bind_data.return_types.push_back(bind_data.underlying_return_types[i]);
-						matched = true;
-						break;
-					}
-				}
-				if (!matched) {
-					bind_data.return_types.push_back(
-					    TransformStringToLogicalType(MetastoreUtils::MapHiveTypeToDuckDB(col.type)));
-				}
-			}
-		} else {
-			for (idx_t i = 0; i < bind_data.underlying_names.size(); i++) {
-				auto &col_name = bind_data.underlying_names[i];
-				if (col_name == "filename") {
-					continue;
-				}
-				bool is_partition_col = false;
-				for (auto &part_col : bind_data.table.partition_spec.columns) {
-					if (part_col.name == col_name) {
-						is_partition_col = true;
-						break;
-					}
-				}
-				if (is_partition_col) {
-					continue;
-				}
-				bind_data.names.push_back(col_name);
-				bind_data.return_types.push_back(bind_data.underlying_return_types[i]);
-			}
-		}
-
-		for (idx_t i = 0; i < bind_data.underlying_names.size(); i++) {
-			if (bind_data.underlying_names[i] == "filename") {
-				bind_data.filename_underlying_idx = i;
-				break;
-			}
-		}
-
-		EnsurePartitionColumnsInSchema(bind_data);
+		BindUnderlyingReader(context, bind_input, bind_data);
 	} catch (std::exception &e) {
-		bind_data.names.clear();
-		bind_data.return_types.clear();
-		if (bind_data.scan_files.empty() && bind_data.is_partitioned) {
-			for (auto &col : bind_data.table.storage_descriptor.columns) {
-				bind_data.names.push_back(col.name);
-				bind_data.return_types.push_back(
-				    TransformStringToLogicalType(MetastoreUtils::MapHiveTypeToDuckDB(col.type)));
-			}
-			for (auto &col : bind_data.table.partition_spec.columns) {
-				bind_data.names.push_back(col.name);
-				bind_data.return_types.push_back(
-				    TransformStringToLogicalType(MetastoreUtils::MapHiveTypeToDuckDB(col.type)));
-			}
-		} else {
-			throw;
-		}
+		HandleUnderlyingBindFailure(bind_data);
 	}
+}
+
+
+static void BindUnderlyingFunction(ClientContext &context, const MetastoreReadBindData &bind_data) {
+	auto selected_format = ResolveSelectedFormat(bind_data);
+	auto &reader = ResolveReaderFunction(context, bind_data, selected_format);
+	auto file_list = AssembleFileList(context, bind_data, reader);
+	auto named_parameters = BuildNamedParams(bind_data, reader);
+	BindUnderlyingReaderWithInputs(context, bind_data, file_list, std::move(named_parameters));
 }
 
 static duckdb::unique_ptr<FunctionData> MetastoreReadBindInternal(ClientContext &context, TableFunctionBindInput &input,

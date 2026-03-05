@@ -5,8 +5,12 @@
 
 namespace duckdb {
 
-static std::vector<std::string> PartitionNames(const MetastoreTable &table,
-                                               const std::vector<MetastorePartitionValue> &partitions) {
+// ──────────────────────────────────────────────────────────────
+// Stage 0: Partition-name extraction
+// Builds sorted, deduplicated "col=val/col=val" strings for display.
+// ──────────────────────────────────────────────────────────────
+static std::vector<std::string> ExtractPartitionNames(const MetastoreTable &table,
+                                                      const std::vector<MetastorePartitionValue> &partitions) {
 	std::vector<std::string> names;
 	for (auto &part : partitions) {
 		std::string name;
@@ -25,6 +29,154 @@ static std::vector<std::string> PartitionNames(const MetastoreTable &table,
 	return names;
 }
 
+// ──────────────────────────────────────────────────────────────
+// Helper: Hidden / sidecar file detection
+// Returns true for files whose basename starts with '.' or '_',
+// or that end with '.crc'.  Used during file expansion to mirror
+// Hive conventions for hidden and checksum sidecar files.
+// ──────────────────────────────────────────────────────────────
+static bool IsIgnoredFile(const string &file_path) {
+	auto slash_pos = file_path.find_last_of("/\\");
+	auto file_name = slash_pos == string::npos ? file_path : file_path.substr(slash_pos + 1);
+	return StringUtil::StartsWith(file_name, ".") || StringUtil::StartsWith(file_name, "_") ||
+	       StringUtil::EndsWith(file_name, ".crc");
+}
+
+// ──────────────────────────────────────────────────────────────
+// Helper: Normalize a format-reader scan path
+// Strips the '[!._]*' suffix injected by some format readers and
+// replaces it with a plain '*' glob, ensuring the directory
+// separator is present.  Returns empty string if the reader
+// returns an empty path (caller should skip).
+// ──────────────────────────────────────────────────────────────
+static string NormalizeScanPath(const IFormatReader &reader, const string &raw_path) {
+	auto path = reader.BuildScanPath(raw_path);
+	if (path.empty()) {
+		return path;
+	}
+	// Strip format-reader [!._]* suffix and replace with plain glob
+	if (StringUtil::EndsWith(path, "[!._]*")) {
+		path = path.substr(0, path.size() - 6);
+		if (!StringUtil::EndsWith(path, "/")) {
+			path += "/";
+		}
+		path += "*";
+	}
+	return path;
+}
+
+// ──────────────────────────────────────────────────────────────
+// Stage 2: File expansion and filtering
+// Given a single raw partition/table path, resolves it to concrete
+// file paths via glob expansion, filters out hidden/sidecar files,
+// and appends the results to the plan's file list.
+//
+// Semantics preserved from the original AddResolvedFiles lambda:
+//   - Empty paths (from format reader) are silently skipped.
+//   - Glob paths are expanded; hidden files are removed.
+//   - If glob expansion yields zero files after filtering, the
+//     raw glob pattern is kept as a fallback.
+//   - If glob expansion throws, the raw path is kept as-is.
+//   - Non-glob paths are added directly if not ignored.
+// ──────────────────────────────────────────────────────────────
+static void ExpandFiles(MetastoreScanPlan &plan, FileSystem &fs, ClientContext &context,
+                        const IFormatReader &reader, const string &raw_path, idx_t part_idx) {
+	auto path = NormalizeScanPath(reader, raw_path);
+	if (path.empty()) {
+		return;
+	}
+
+	if (FileSystem::HasGlob(path)) {
+		try {
+			auto expanded = fs.GlobFiles(path, context, FileGlobOptions::ALLOW_EMPTY);
+			expanded.erase(std::remove_if(expanded.begin(), expanded.end(),
+			                              [&](const auto &file) { return IsIgnoredFile(file.path); }),
+			               expanded.end());
+			if (expanded.empty()) {
+				plan.files.push_back(path);
+				plan.file_partition_indices.push_back(part_idx);
+			} else {
+				for (auto &file : expanded) {
+					if (!IsIgnoredFile(file.path)) {
+						plan.files.push_back(file.path);
+						plan.file_partition_indices.push_back(part_idx);
+					}
+				}
+			}
+		} catch (...) {
+			plan.files.push_back(path);
+			plan.file_partition_indices.push_back(part_idx);
+		}
+	} else {
+		if (!IsIgnoredFile(path)) {
+			plan.files.push_back(path);
+			plan.file_partition_indices.push_back(part_idx);
+		}
+	}
+}
+
+// ──────────────────────────────────────────────────────────────
+// Stage 1: Partition listing and validation
+// Fetches partitions from the connector, validates the count
+// against the configured limit, and populates the plan with
+// partition metadata and display names.
+//
+// Throws BinderException on connector failure or when partition
+// count exceeds max_partitions.
+// ──────────────────────────────────────────────────────────────
+static void ListPartitions(MetastoreScanPlan &plan, IMetastoreConnector &connector,
+                           const MetastoreTable &table, const MetastorePlanOptions &opt) {
+	auto parts_result = connector.ListPartitions(opt.table_name, opt.predicate);
+	if (!parts_result.IsOk()) {
+		throw BinderException("Failed to list partitions for %s.%s: %s", connector.GetNamespace(), opt.table_name,
+		                      parts_result.error.message);
+	}
+
+	plan.partitions_examined = parts_result.value.size();
+	if (plan.partitions_examined > opt.max_partitions) {
+		throw BinderException("Too many partitions (%s) for table %s.%s. Add a simple predicate on partition "
+		                      "columns or increase metastore_max_partitions.",
+		                      to_string(plan.partitions_examined), connector.GetNamespace(), opt.table_name);
+	}
+
+	plan.partitions = std::move(parts_result.value);
+	plan.selected_partitions = ExtractPartitionNames(table, plan.partitions);
+}
+
+// ──────────────────────────────────────────────────────────────
+// Stage 3: Scan-target assembly
+// For partitioned tables, expands each partition's location into
+// concrete file paths.  If no files are found across all partitions,
+// falls back to the table's base storage location.
+// For non-partitioned tables, expands the table's storage location
+// directly.
+// ──────────────────────────────────────────────────────────────
+static void AssembleScanTargets(MetastoreScanPlan &plan, FileSystem &fs, ClientContext &context,
+                                const IFormatReader &reader, const MetastoreTable &table) {
+	if (!plan.is_partitioned) {
+		ExpandFiles(plan, fs, context, reader, table.storage_descriptor.location, 0);
+		return;
+	}
+
+	for (idx_t i = 0; i < plan.partitions.size(); i++) {
+		ExpandFiles(plan, fs, context, reader, plan.partitions[i].location, i);
+	}
+
+	// Fallback: if no partition yielded any files, try the base location
+	if (plan.files.empty()) {
+		ExpandFiles(plan, fs, context, reader, table.storage_descriptor.location, 0);
+	}
+}
+
+// ──────────────────────────────────────────────────────────────
+// PlanScan – top-level orchestrator
+// Delegates to deterministic stages in order:
+//   1. ListPartitions   – fetch & validate partition metadata
+//   2. AssembleScanTargets – expand each location into files
+// PartitionNames (ExtractPartitionNames) is called inside
+// ListPartitions.  ExpandFiles + IsIgnoredFile are called
+// inside AssembleScanTargets.
+// ──────────────────────────────────────────────────────────────
 MetastoreScanPlan PlanScan(ClientContext &context, IMetastoreConnector &connector, const MetastoreTable &table,
                            const MetastorePlanOptions &opt) {
 	MetastoreScanPlan plan;
@@ -35,83 +187,13 @@ MetastoreScanPlan PlanScan(ClientContext &context, IMetastoreConnector &connecto
 	auto &fs = FileSystem::GetFileSystem(context);
 	auto &reader = GetFormatReader(table.storage_descriptor.format);
 
-	auto AddResolvedFiles = [&](const string &raw_path, idx_t part_idx) {
-		auto IsIgnoredFile = [](const string &file_path) {
-			auto slash_pos = file_path.find_last_of("/\\");
-			auto file_name = slash_pos == string::npos ? file_path : file_path.substr(slash_pos + 1);
-			return StringUtil::StartsWith(file_name, ".") || StringUtil::StartsWith(file_name, "_") ||
-			       StringUtil::EndsWith(file_name, ".crc");
-		};
-
-		auto path = reader.BuildScanPath(raw_path);
-		if (path.empty()) {
-			return;
-		}
-		// glob expansion
-		if (StringUtil::EndsWith(path, "[!._]*")) {
-			path = path.substr(0, path.size() - 6);
-			if (!StringUtil::EndsWith(path, "/")) {
-				path += "/";
-			}
-			path += "*";
-		}
-
-		if (FileSystem::HasGlob(path)) {
-			try {
-				auto expanded = fs.GlobFiles(path, context, FileGlobOptions::ALLOW_EMPTY);
-				expanded.erase(std::remove_if(expanded.begin(), expanded.end(),
-				                              [&](const auto &file) { return IsIgnoredFile(file.path); }),
-				               expanded.end());
-				if (expanded.empty()) {
-					plan.files.push_back(path);
-					plan.file_partition_indices.push_back(part_idx);
-				} else {
-					for (auto &file : expanded) {
-						if (!IsIgnoredFile(file.path)) {
-							plan.files.push_back(file.path);
-							plan.file_partition_indices.push_back(part_idx);
-						}
-					}
-				}
-			} catch (...) {
-				plan.files.push_back(path);
-				plan.file_partition_indices.push_back(part_idx);
-			}
-		} else {
-			if (!IsIgnoredFile(path)) {
-				plan.files.push_back(path);
-				plan.file_partition_indices.push_back(part_idx);
-			}
-		}
-	};
-
-	if (!plan.is_partitioned) {
-		AddResolvedFiles(table.storage_descriptor.location, 0);
-	} else {
-		auto parts_result = connector.ListPartitions(opt.table_name, opt.predicate);
-		if (!parts_result.IsOk()) {
-			throw BinderException("Failed to list partitions for %s.%s: %s", connector.GetNamespace(), opt.table_name,
-			                      parts_result.error.message);
-		}
-
-		plan.partitions_examined = parts_result.value.size();
-		if (plan.partitions_examined > opt.max_partitions) {
-			throw BinderException("Too many partitions (%s) for table %s.%s. Add a simple predicate on partition "
-			                      "columns or increase metastore_max_partitions.",
-			                      to_string(plan.partitions_examined), connector.GetNamespace(), opt.table_name);
-		}
-
-		plan.partitions = std::move(parts_result.value);
-		plan.selected_partitions = PartitionNames(table, plan.partitions);
-
-		for (idx_t i = 0; i < plan.partitions.size(); i++) {
-			AddResolvedFiles(plan.partitions[i].location, i);
-		}
-
-		if (plan.files.empty()) {
-			AddResolvedFiles(table.storage_descriptor.location, 0);
-		}
+	// Stage 1: list and validate partitions (partitioned tables only)
+	if (plan.is_partitioned) {
+		ListPartitions(plan, connector, table, opt);
 	}
+
+	// Stage 2: expand partition/table locations into concrete scan files
+	AssembleScanTargets(plan, fs, context, reader, table);
 
 	return plan;
 }
