@@ -1,6 +1,5 @@
 #include "metastore_scan_plan.hpp"
 #include "connector/metastore_connector.hpp"
-#include "metastore_utils.hpp"
 #include "formats/format_reader.hpp"
 #include <algorithm>
 
@@ -52,7 +51,7 @@ MetastoreScanPlan PlanScan(ClientContext &context, IMetastoreConnector &connecto
 
 		if (FileSystem::HasGlob(path)) {
 			try {
-				auto expanded = fs.GlobFiles(path, context);
+				auto expanded = fs.GlobFiles(path, context, FileGlobOptions::ALLOW_EMPTY);
 				if (expanded.empty()) {
 					plan.files.push_back(path);
 					plan.file_partition_indices.push_back(part_idx);

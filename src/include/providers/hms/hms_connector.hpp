@@ -20,6 +20,11 @@ public:
 	                                                                     const std::string &predicate = "") override;
 	MetastoreResult<MetastoreTableProperties> GetTableStats(const std::string &table_name) override;
 
+	MetastoreResult<bool> CreateTable(const MetastoreTable &table) override;
+	MetastoreResult<bool> AddPartition(const std::string &table_name,
+	                                   const MetastorePartitionValue &partition) override;
+	MetastoreResult<bool> DropPartition(const std::string &table_name, const std::vector<std::string> &values) override;
+
 private:
 	string bound_namespace_;
 	HmsConfig config_;

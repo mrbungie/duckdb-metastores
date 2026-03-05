@@ -26,11 +26,6 @@ named_parameter_map_t JsonFormatReader::BuildNamedParameters(const MetastoreStor
 		for (auto &column : sd.columns) {
 			column_types.emplace_back(column.name, Value(MetastoreUtils::MapHiveTypeToDuckDB(column.type)));
 		}
-		if (is_partitioned) {
-			for (auto &col : partition_spec.columns) {
-				column_types.emplace_back(col.name, Value(MetastoreUtils::MapHiveTypeToDuckDB(col.type)));
-			}
-		}
 		AddNamedParameter(params, "columns", Value::STRUCT(std::move(column_types)));
 	}
 	if (is_partitioned) {

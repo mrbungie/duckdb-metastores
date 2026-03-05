@@ -4,6 +4,9 @@
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/main/connection.hpp"
+#include "duckdb/common/file_system.hpp"
+#include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/main/materialized_query_result.hpp"
 
 namespace duckdb {
 
@@ -44,7 +47,6 @@ struct MetastoreWriteBindData : public TableFunctionData {
 	string catalog;
 	string schema;
 	string table_name;
-	mutable duckdb::unique_ptr<IMetastoreConnector> connector;
 
 	// For create table
 	MetastoreTable new_table;
@@ -56,12 +58,16 @@ struct MetastoreWriteBindData : public TableFunctionData {
 };
 
 struct MetastoreWriteGlobalState : public GlobalTableFunctionState {
+	duckdb::unique_ptr<IMetastoreConnector> connector;
 	bool success = false;
 };
 
 static duckdb::unique_ptr<GlobalTableFunctionState> MetastoreWriteInitGlobal(ClientContext &context,
                                                                              TableFunctionInitInput &input) {
-	return duckdb::make_uniq<MetastoreWriteGlobalState>();
+	auto &bind_data = input.bind_data->Cast<MetastoreWriteBindData>();
+	auto gstate = duckdb::make_uniq<MetastoreWriteGlobalState>();
+	gstate->connector = CreateConnector(bind_data.catalog);
+	return std::move(gstate);
 }
 
 //===--------------------------------------------------------------------===//
@@ -76,7 +82,6 @@ static duckdb::unique_ptr<FunctionData> MetastoreCreateTableBind(ClientContext &
 	bind_data->catalog = input.inputs[0].ToString();
 	bind_data->schema = input.inputs[1].ToString();
 	bind_data->table_name = input.inputs[2].ToString();
-	bind_data->connector = CreateConnector(bind_data->catalog);
 
 	MetastoreTable tbl;
 	tbl.catalog = bind_data->catalog;
@@ -131,7 +136,7 @@ static void MetastoreCreateTableExecute(ClientContext &context, TableFunctionInp
 	}
 	auto &bind_data = data.bind_data->Cast<MetastoreWriteBindData>();
 
-	auto result = bind_data.connector->CreateTable(bind_data.new_table);
+	auto result = gstate.connector->CreateTable(bind_data.new_table);
 	if (!result.IsOk()) {
 		throw IOException("Failed to create table: %s", result.error.message);
 	}
@@ -153,7 +158,6 @@ static duckdb::unique_ptr<FunctionData> MetastoreCreatePartitionBind(ClientConte
 	bind_data->catalog = input.inputs[0].ToString();
 	bind_data->schema = input.inputs[1].ToString();
 	bind_data->table_name = input.inputs[2].ToString();
-	bind_data->connector = CreateConnector(bind_data->catalog);
 
 	auto loc_it = input.named_parameters.find("location");
 	if (loc_it == input.named_parameters.end()) {
@@ -190,7 +194,7 @@ static void MetastoreCreatePartitionExecute(ClientContext &context, TableFunctio
 		mp.values.push_back(v);
 	}
 
-	auto result = bind_data.connector->AddPartition(bind_data.table_name, mp);
+	auto result = gstate.connector->AddPartition(bind_data.table_name, mp);
 	if (!result.IsOk()) {
 		throw IOException("Failed to add partition: %s", result.error.message);
 	}
@@ -210,7 +214,6 @@ static duckdb::unique_ptr<FunctionData> MetastoreInsertBind(ClientContext &conte
 	bind_data->catalog = input.inputs[0].ToString();
 	bind_data->schema = input.inputs[1].ToString();
 	bind_data->table_name = input.inputs[2].ToString();
-	bind_data->connector = CreateConnector(bind_data->catalog);
 
 	auto q_it = input.named_parameters.find("query");
 	if (q_it == input.named_parameters.end()) {
@@ -241,70 +244,143 @@ static void MetastoreInsertExecute(ClientContext &context, TableFunctionInput &d
 	auto &bind_data = data.bind_data->Cast<MetastoreWriteBindData>();
 
 	// 1. Fetch table metadata to determine target format and location
-	auto table_res = bind_data.connector->GetTable(bind_data.table_name);
+	auto table_res = gstate.connector->GetTable(bind_data.table_name);
 	if (!table_res.IsOk()) {
 		throw IOException("Failed to fetch table metadata: %s", table_res.error.message);
 	}
 	auto &table = table_res.value;
 
-	string target_dir = table.storage_descriptor.location;
-
-	// 2. Build partition path if partitioned
-	if (table.IsPartitioned()) {
-		if (bind_data.partition_values.size() != table.partition_spec.columns.size()) {
-			throw InvalidInputException("Partition value count mismatch. Expected %d, got %d",
-			                            static_cast<int>(table.partition_spec.columns.size()),
-			                            static_cast<int>(bind_data.partition_values.size()));
-		}
-		for (idx_t i = 0; i < table.partition_spec.columns.size(); i++) {
-			if (!StringUtil::EndsWith(target_dir, "/")) {
-				target_dir += "/";
-			}
-			target_dir += table.partition_spec.columns[i].name + "=" + bind_data.partition_values[i];
-		}
-	}
-
-	// 3. Perform COPY
 	string format_str = "parquet";
-	string extension = ".parquet";
 	if (table.storage_descriptor.format == MetastoreFormat::CSV) {
 		format_str = "csv";
-		extension = ".csv";
 	} else if (table.storage_descriptor.format == MetastoreFormat::JSON) {
 		format_str = "json";
-		extension = ".json";
 	}
 
-	string write_path = target_dir;
-	if (table.IsPartitioned()) {
-		// If it's a directory-style path generated from base location,
-		// ensure it's a file path for the COPY command or it will fail if the dir doesn't exist.
-		// However, registering it as a file path is also more robust for the mock provider.
-		if (!StringUtil::EndsWith(write_path, extension)) {
-			if (!StringUtil::EndsWith(write_path, "/")) {
-				write_path += "/";
+	// 2. Determine mode: Targeted (single partition) or Dynamic (auto-discovery)
+	if (table.IsPartitioned() && bind_data.partition_values.empty()) {
+		// --- DYNAMIC MODE ---
+		// A. Validate format support
+		if (table.storage_descriptor.format == MetastoreFormat::Unknown) {
+			throw BinderException("Dynamic partitioning not supported for Unknown format");
+		}
+
+		// B. Ensure base location exists
+		auto &fs = FileSystem::GetFileSystem(context);
+		if (!fs.DirectoryExists(table.storage_descriptor.location)) {
+			fs.CreateDirectoriesRecursive(table.storage_descriptor.location);
+		}
+
+		// C. Discover partitions from data
+		string pcols;
+		vector<string> pcol_names;
+		for (idx_t i = 0; i < table.partition_spec.columns.size(); i++) {
+			if (i > 0) {
+				pcols += ", ";
 			}
-			write_path += "data" + extension;
+			auto name = table.partition_spec.columns[i].name;
+			pcols += KeywordHelper::WriteOptionallyQuoted(name);
+			pcol_names.push_back(name);
 		}
-	}
 
-	string copy_sql = "COPY (" + bind_data.query + ") TO '" + write_path + "' (FORMAT " + format_str + ");";
-	// We use an isolated connection to run the copy query avoiding context re-entrance issues
-	auto res = MetastoreRuntime::GetConnection().Query(copy_sql);
-	if (res->HasError()) {
-		throw IOException("Failed to execute COPY to %s: %s", write_path, res->GetError());
-	}
-
-	// 4. Register partition if partitioned
-	if (table.IsPartitioned()) {
-		MetastorePartitionValue mp;
-		mp.location = write_path;
-		for (auto &v : bind_data.partition_values) {
-			mp.values.push_back(v);
+		string discovery_sql = "SELECT DISTINCT " + pcols + " FROM (" + bind_data.query + ")";
+		auto discovery_res = MetastoreRuntime::GetConnection().Query(discovery_sql);
+		if (discovery_res->HasError()) {
+			throw IOException("Failed to discover partitions (is your query missing partition columns?): %s",
+			                  discovery_res->GetError());
 		}
-		auto p_res = bind_data.connector->AddPartition(bind_data.table_name, mp);
-		if (!p_res.IsOk()) {
-			throw IOException("Failed to add partition metadata: %s", p_res.error.message);
+		auto materialized_res = unique_ptr_cast<QueryResult, MaterializedQueryResult>(std::move(discovery_res));
+
+		if (materialized_res->RowCount() > 0) {
+			// D. Perform single batch COPY with PARTITION_BY
+			string copy_sql = "COPY (" + bind_data.query + ") TO '" + table.storage_descriptor.location + "' (FORMAT " +
+			                  format_str + ", PARTITION_BY (" + pcols + "), OVERWRITE TRUE);";
+			auto res = MetastoreRuntime::GetConnection().Query(copy_sql);
+			if (res->HasError()) {
+				throw IOException("Failed to execute dynamic COPY: %s", res->GetError());
+			}
+
+			// E. Register each discovered partition
+			for (idx_t r = 0; r < materialized_res->RowCount(); r++) {
+				MetastorePartitionValue mp;
+				string part_path = table.storage_descriptor.location;
+				for (idx_t c = 0; c < materialized_res->ColumnCount(); c++) {
+					auto val_obj = materialized_res->GetValue(c, r);
+					string val;
+					string path_val;
+					if (val_obj.IsNull()) {
+						val = "NULL";      // Logical value in metastore
+						path_val = "NULL"; // Actual directory name observed in DuckDB
+					} else {
+						val = val_obj.ToString();
+						path_val = val;
+					}
+					mp.values.push_back(val);
+					if (!StringUtil::EndsWith(part_path, "/")) {
+						part_path += "/";
+					}
+					part_path += pcol_names[c] + "=" + path_val;
+				}
+				mp.location = part_path;
+				auto p_res = gstate.connector->AddPartition(bind_data.table_name, mp);
+				if (!p_res.IsOk()) {
+					throw IOException("Failed to add discovered partition metadata: %s", p_res.error.message);
+				}
+			}
+		}
+	} else {
+		// --- TARGETED OR NON-PARTITIONED MODE ---
+		string target_dir = table.storage_descriptor.location;
+
+		// Build partition path if partitioned and values provided
+		if (table.IsPartitioned()) {
+			if (bind_data.partition_values.size() != table.partition_spec.columns.size()) {
+				throw InvalidInputException("Partition value count mismatch. Expected %d, got %d",
+				                            static_cast<int>(table.partition_spec.columns.size()),
+				                            static_cast<int>(bind_data.partition_values.size()));
+			}
+			for (idx_t i = 0; i < table.partition_spec.columns.size(); i++) {
+				if (!StringUtil::EndsWith(target_dir, "/")) {
+					target_dir += "/";
+				}
+				target_dir += table.partition_spec.columns[i].name + "=" + bind_data.partition_values[i];
+			}
+			if (!StringUtil::EndsWith(target_dir, ".parquet") &&
+			    table.storage_descriptor.format == MetastoreFormat::Parquet) {
+				target_dir += ".parquet";
+			}
+		}
+
+		// Ensure parent directory exists for partitioned writes
+		if (table.IsPartitioned()) {
+			auto &fs = FileSystem::GetFileSystem(context);
+			auto last_sep = target_dir.find_last_of("/\\");
+			if (last_sep != string::npos) {
+				auto parent_dir = target_dir.substr(0, last_sep);
+				if (!fs.DirectoryExists(parent_dir)) {
+					fs.CreateDirectoriesRecursive(parent_dir);
+				}
+			}
+		}
+
+		string copy_sql =
+		    "COPY (" + bind_data.query + ") TO '" + target_dir + "' (FORMAT " + format_str + ", OVERWRITE TRUE);";
+		auto res = MetastoreRuntime::GetConnection().Query(copy_sql);
+		if (res->HasError()) {
+			throw IOException("Failed to execute COPY: %s", res->GetError());
+		}
+
+		// Register individual partition
+		if (table.IsPartitioned()) {
+			MetastorePartitionValue mp;
+			mp.location = target_dir;
+			for (auto &v : bind_data.partition_values) {
+				mp.values.push_back(v);
+			}
+			auto p_res = gstate.connector->AddPartition(bind_data.table_name, mp);
+			if (!p_res.IsOk()) {
+				throw IOException("Failed to add partition metadata: %s", p_res.error.message);
+			}
 		}
 	}
 

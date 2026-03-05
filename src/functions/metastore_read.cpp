@@ -258,6 +258,19 @@ static void BindUnderlyingFunction(ClientContext &context, const MetastoreReadBi
 	TableFunctionBindInput bind_input(bind_inputs, named_parameters, input_table_types, input_table_names, nullptr,
 	                                  nullptr, bind_data.underlying_function, *table_func_ref);
 
+	// If partitioned, we MUST have the filename to resolve partition values
+	bool has_filename = false;
+	for (const auto &name : bind_data.names) {
+		if (name == "filename") {
+			has_filename = true;
+			break;
+		}
+	}
+	if (bind_data.is_partitioned && !has_filename) {
+		bind_data.names.push_back("filename");
+		bind_data.return_types.push_back(LogicalType::VARCHAR);
+	}
+
 	try {
 		bind_data.underlying_bind_data =
 		    bind_data.underlying_function.bind(context, bind_input, bind_data.return_types, bind_data.names);
@@ -561,12 +574,35 @@ duckdb::unique_ptr<LocalTableFunctionState> MetastoreReadInitLocal(ExecutionCont
 static Value ResolvePartitionValue(const MetastoreReadBindData &bind_data, FileSystem &fs, const string &raw_filename,
                                    idx_t p_idx) {
 	auto fname = MetastoreUtils::NormalizeLocation(fs.ExpandPath(raw_filename));
+
+	// 1. Try exact match
 	auto it = bind_data.file_to_part_idx.find(fname);
 
+	// 2. Try matching the directory part if the stored path is a directory or glob
 	if (it == bind_data.file_to_part_idx.end()) {
 		for (auto &entry : bind_data.file_to_part_idx) {
-			if (StringUtil::EndsWith(fname, entry.first) || StringUtil::EndsWith(entry.first, fname) ||
-			    fname.find(entry.first) != string::npos || entry.first.find(fname) != string::npos) {
+			auto &candidate = entry.first;
+			string base = candidate;
+			// Strip trailing glob if present
+			if (StringUtil::EndsWith(base, "*")) {
+				base = base.substr(0, base.size() - 1);
+			}
+			if (StringUtil::EndsWith(base, "/")) {
+				base = base.substr(0, base.size() - 1);
+			}
+
+			// If the actual file is inside this directory, we have a match
+			if (StringUtil::StartsWith(fname, base)) {
+				it = bind_data.file_to_part_idx.find(candidate);
+				break;
+			}
+		}
+	}
+
+	// 3. Fallback to fuzzy match (least reliable)
+	if (it == bind_data.file_to_part_idx.end()) {
+		for (auto &entry : bind_data.file_to_part_idx) {
+			if (StringUtil::EndsWith(fname, entry.first) || StringUtil::EndsWith(entry.first, fname)) {
 				it = bind_data.file_to_part_idx.find(entry.first);
 				break;
 			}

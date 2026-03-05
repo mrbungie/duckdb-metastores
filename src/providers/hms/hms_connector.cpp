@@ -301,4 +301,72 @@ MetastoreResult<MetastoreTableProperties> HmsConnector::GetTableStats(const std:
 	return MetastoreResult<MetastoreTableProperties>::Success(std::move(table_result.value.properties));
 }
 
+MetastoreResult<bool> HmsConnector::CreateTable(const MetastoreTable &table) {
+	auto conn_res = ConnectHms(config_);
+	if (!conn_res.IsOk()) {
+		return MetastoreResult<bool>::Error(conn_res.error.code, conn_res.error.message, conn_res.error.detail,
+		                                    conn_res.error.retryable);
+	}
+
+	Apache::Hadoop::Hive::Table hms_table;
+	HmsMapper::ToHmsTable(table, &hms_table);
+	hms_table.dbName = bound_namespace_;
+
+	try {
+		conn_res.value.client->create_table(hms_table);
+		return MetastoreResult<bool>::Success(true);
+	} catch (const TException &tx) {
+		return MetastoreResult<bool>::Error(MetastoreErrorCode::Transient, "HMS create table failed", tx.what(), true);
+	}
+}
+
+MetastoreResult<bool> HmsConnector::AddPartition(const std::string &table_name,
+                                                 const MetastorePartitionValue &partition) {
+	auto conn_res = ConnectHms(config_);
+	if (!conn_res.IsOk()) {
+		return MetastoreResult<bool>::Error(conn_res.error.code, conn_res.error.message, conn_res.error.detail,
+		                                    conn_res.error.retryable);
+	}
+
+	auto table_info = GetTable(table_name);
+	if (!table_info.IsOk()) {
+		return MetastoreResult<bool>::Error(table_info.error.code, table_info.error.message);
+	}
+
+	Apache::Hadoop::Hive::Partition hms_part;
+	HmsMapper::ToHmsPartition(table_name, partition, &hms_part);
+	hms_part.dbName = bound_namespace_;
+
+	// We need to copy the partition's storage descriptor from the table for completeness
+	Apache::Hadoop::Hive::Table hms_table;
+	HmsMapper::ToHmsTable(table_info.value, &hms_table);
+	hms_part.sd = hms_table.sd;
+	hms_part.sd.location = partition.location;
+
+	try {
+		Apache::Hadoop::Hive::Partition out_part;
+		conn_res.value.client->add_partition(out_part, hms_part);
+		return MetastoreResult<bool>::Success(true);
+	} catch (const TException &tx) {
+		return MetastoreResult<bool>::Error(MetastoreErrorCode::Transient, "HMS add partition failed", tx.what(), true);
+	}
+}
+
+MetastoreResult<bool> HmsConnector::DropPartition(const std::string &table_name,
+                                                  const std::vector<std::string> &values) {
+	auto conn_res = ConnectHms(config_);
+	if (!conn_res.IsOk()) {
+		return MetastoreResult<bool>::Error(conn_res.error.code, conn_res.error.message, conn_res.error.detail,
+		                                    conn_res.error.retryable);
+	}
+
+	try {
+		conn_res.value.client->drop_partition(bound_namespace_, table_name, values, true);
+		return MetastoreResult<bool>::Success(true);
+	} catch (const TException &tx) {
+		return MetastoreResult<bool>::Error(MetastoreErrorCode::Transient, "HMS drop partition failed", tx.what(),
+		                                    true);
+	}
+}
+
 } // namespace duckdb

@@ -216,6 +216,9 @@ public:
 		(void)predicate;
 		try {
 			if (!store.HasTable(bound_namespace, table)) {
+				LoadFromTables();
+			}
+			if (!store.HasTable(bound_namespace, table)) {
 				return MetastoreResult<std::vector<MetastorePartitionValue>>::Success({});
 			}
 			auto partitions = store.ListPartitions(bound_namespace, table);

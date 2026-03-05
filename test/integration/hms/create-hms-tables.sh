@@ -90,8 +90,19 @@ for extra_idx in $(seq 1 8); do
 	extra_month=$(printf "%02d" "${extra_idx}")
 	extra_id=$((200 + extra_idx))
 	sql_payload+="ALTER TABLE ${part_tbl_parquet} ADD PARTITION (year='${extra_year}', month='${extra_month}') LOCATION 'file:${part_tbl_parquet_path}/year=${extra_year}/month=${extra_month}';\n"
+	sql_payload+="ALTER TABLE ${part_tbl_parquet} ADD PARTITION (year='${extra_year}', month='${extra_month}') LOCATION 'file:${part_tbl_parquet_path}/year=${extra_year}/month=${extra_month}';\n"
 	sql_payload+="INSERT INTO TABLE ${part_tbl_parquet} PARTITION(year='${extra_year}', month='${extra_month}') VALUES (${extra_id}, 'extra_parquet_${extra_idx}');\n"
 done
+
+part_tbl_json="fixture_tbl_partitioned_json"
+part_tbl_json_path="${HMS_SHARED_DIR}/${HMS_DB_NAME}/${part_tbl_json}"
+rm -rf "${part_tbl_json_path}"
+mkdir -p "${part_tbl_json_path}"
+chmod -R 0777 "${part_tbl_json_path}"
+sql_payload+="DROP TABLE IF EXISTS ${part_tbl_json};\n"
+sql_payload+="CREATE EXTERNAL TABLE ${part_tbl_json} (id INT, value STRING) PARTITIONED BY (year STRING, month STRING) ROW FORMAT SERDE 'org.apache.hive.hcatalog.data.JsonSerDe' STORED AS TEXTFILE LOCATION 'file:${part_tbl_json_path}';\n"
+sql_payload+="ALTER TABLE ${part_tbl_json} ADD PARTITION (year='2023', month='10') LOCATION 'file:${part_tbl_json_path}/year=2023/month=10';\n"
+sql_payload+="INSERT INTO TABLE ${part_tbl_json} PARTITION(year='2023', month='10') VALUES (33, 'old_json');\n"
 
 printf '%b' "${sql_payload}" > "${BOOTSTRAP_SQL}"
 

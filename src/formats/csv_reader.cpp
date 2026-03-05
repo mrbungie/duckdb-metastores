@@ -16,6 +16,7 @@ named_parameter_map_t CsvFormatReader::BuildNamedParameters(const MetastoreStora
                                                             bool is_partitioned) const {
 	named_parameter_map_t params;
 	AddNamedParameter(params, "auto_detect", Value::BOOLEAN(true));
+	AddNamedParameter(params, "header", Value::BOOLEAN(true));
 	auto serde_it = sd.serde_parameters.find("field.delim");
 	if (serde_it == sd.serde_parameters.end()) {
 		serde_it = sd.serde_parameters.find("serialization.format");

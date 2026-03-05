@@ -1,0 +1,23 @@
+# name: test/sql/metastore/hms/hms_pushdown_csv.test
+# description: end to end test of partition pushdown against a live HMS csv table (TEXTFILE)
+# group: [hms]
+
+require metastore
+
+require-env HMS_LOCAL_ENDPOINT
+
+test-env HMS_LOCAL_ENDPOINT 127.0.0.1:9083
+
+statement ok
+ATTACH 'thrift://${HMS_LOCAL_ENDPOINT}' AS hms (TYPE metastore);
+
+query II
+SELECT year, value FROM hms.metastore_ci.fixture_tbl_partitioned WHERE year='2023';
+----
+2023	old
+
+query II
+SELECT year, value FROM hms.metastore_ci.fixture_tbl_partitioned WHERE year='2023' OR year='2024' ORDER BY year;
+----
+2023	old
+2024	new
