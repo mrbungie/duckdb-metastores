@@ -1,8 +1,10 @@
 #include "metastore_utils.hpp"
 #include "duckdb/common/string_util.hpp"
+#include <unordered_map>
 
 namespace duckdb {
 
+// Strips parenthesized suffix and lowercases: "DECIMAL(10,2)" -> "decimal"
 std::string MetastoreUtils::TrimTypeSuffix(std::string hive_type) {
 	auto pos = hive_type.find('(');
 	if (pos != std::string::npos) {
@@ -11,41 +13,72 @@ std::string MetastoreUtils::TrimTypeSuffix(std::string hive_type) {
 	return StringUtil::Lower(hive_type);
 }
 
+// Static lookup table mapping normalized Hive base types to DuckDB type strings.
+// Used for types that do not carry parameters (or whose parameters are ignored).
+static const std::unordered_map<std::string, std::string> &GetHiveTypeLookup() {
+	static const std::unordered_map<std::string, std::string> lookup = {
+	    {"tinyint", "TINYINT"},
+	    {"smallint", "SMALLINT"},
+	    {"int", "INTEGER"},
+	    {"integer", "INTEGER"},
+	    {"bigint", "BIGINT"},
+	    {"float", "FLOAT"},
+	    {"double", "DOUBLE"},
+	    {"boolean", "BOOLEAN"},
+	    {"date", "DATE"},
+	    {"timestamp", "TIMESTAMP"},
+	    {"string", "VARCHAR"},
+	    {"std::string", "VARCHAR"},
+	    {"varchar", "VARCHAR"},
+	    {"char", "VARCHAR"},
+	    {"binary", "BLOB"},
+	};
+	return lookup;
+}
+
+// Extracts the parenthesized parameter substring from a raw Hive type.
+// Returns the content between '(' and ')' if present, or an empty string.
+// Example: "decimal(10,2)" -> "10,2", "int" -> ""
+static std::string ExtractTypeParams(const std::string &raw_type) {
+	auto open = raw_type.find('(');
+	if (open == std::string::npos) {
+		return "";
+	}
+	auto close = raw_type.find(')', open);
+	if (close == std::string::npos) {
+		return "";
+	}
+	return raw_type.substr(open + 1, close - open - 1);
+}
+
+// Handles parameterized Hive types that need parameter passthrough.
+// Currently only "decimal" carries parameters to DuckDB; char/varchar parameters
+// are intentionally discarded (DuckDB VARCHAR is unbounded).
+static std::string MapParameterizedType(const std::string &base_type, const std::string &params) {
+	if (base_type == "decimal" && !params.empty()) {
+		return "DECIMAL(" + params + ")";
+	}
+	// decimal without params gets default precision
+	if (base_type == "decimal") {
+		return "DECIMAL";
+	}
+	return "";
+}
+
 std::string MetastoreUtils::MapHiveTypeToDuckDB(const std::string &hive_type) {
-	auto normalized = TrimTypeSuffix(hive_type);
-	if (normalized == "tinyint") {
-		return "TINYINT";
+	auto base_type = TrimTypeSuffix(hive_type);
+	const auto &lookup = GetHiveTypeLookup();
+	auto it = lookup.find(base_type);
+	if (it != lookup.end()) {
+		return it->second;
 	}
-	if (normalized == "smallint") {
-		return "SMALLINT";
+	// Check parameterized types not in the simple lookup table
+	auto params = ExtractTypeParams(hive_type);
+	auto result = MapParameterizedType(base_type, params);
+	if (!result.empty()) {
+		return result;
 	}
-	if (normalized == "int" || normalized == "integer") {
-		return "INTEGER";
-	}
-	if (normalized == "bigint") {
-		return "BIGINT";
-	}
-	if (normalized == "float") {
-		return "FLOAT";
-	}
-	if (normalized == "double") {
-		return "DOUBLE";
-	}
-	if (normalized == "boolean") {
-		return "BOOLEAN";
-	}
-	if (normalized == "date") {
-		return "DATE";
-	}
-	if (normalized == "timestamp") {
-		return "TIMESTAMP";
-	}
-	if (normalized == "std::string" || normalized == "varchar" || normalized == "char") {
-		return "VARCHAR";
-	}
-	if (normalized == "binary") {
-		return "BLOB";
-	}
+	// Unknown types default to VARCHAR
 	return "VARCHAR";
 }
 
