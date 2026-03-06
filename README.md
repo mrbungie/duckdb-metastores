@@ -33,14 +33,75 @@ The main binaries that will be built are:
 - `unittest` is the test runner of duckdb. Again, the extension is already linked into the binary.
 - `metastore.duckdb_extension` is the loadable binary as it would be distributed.
 
-## Running the extension
-To run the extension code, simply start the shell with `./build/release/duckdb`.
-
 The Metastore extension allows attaching external catalogs. For example, to attach a Hive Metastore:
 ```sql
 ATTACH 'thrift://localhost:9083' AS hms (TYPE metastore);
 SELECT * FROM hms.default.my_table;
 ```
+
+## Writing to the Metastore
+
+The extension provides high-level functions to modify the metastore and write data physically to the storage backend.
+
+### 1. Create a Table
+Creates a table definition in the metastore.
+```sql
+CALL metastore_create_table('hms', 'default', 'new_table',
+  columns := {'id': 'BIGINT', 'name': 'VARCHAR'},
+  partitions := {'dt': 'VARCHAR'},
+  location := 's3://bucket/new_table_dir',
+  format := 'parquet'
+);
+```
+
+### 2. Register a Partition
+Registers a partition metadata entry (metadata only).
+```sql
+CALL metastore_create_partition('hms', 'default', 'new_table',
+  values := ['2023-10-01'],
+  location := 's3://bucket/new_table_dir/dt=2023-10-01'
+);
+```
+
+### 3. Insert and Auto-Partition
+Physically writes files using DuckDB's high-performance engine and registers the partitions in the metastore. 
+
+**Dynamic Partitioning (Auto-Discovery):**
+If you don't provide `values`, the extension automatically discovers unique partitions from your query results and registers them all in one batch.
+```sql
+-- This will write multiple directories and register multiple partitions at once
+CALL metastore_insert('hms', 'default', 'new_table',
+  query := 'SELECT * FROM local_source_table'
+);
+```
+
+**Targeted Partitioning:**
+If you provide `values`, the extension writes specifically to that partition.
+```sql
+CALL metastore_insert('hms', 'default', 'new_table',
+  query := 'SELECT id, name FROM local_source_table WHERE dt = ''2023-10-01''',
+  values := ['2023-10-01']
+);
+```
+
+## Support Matrix
+
+The Metastore extension's architecture is decoupled: **Engine Verbs** work across all providers once implemented, and **Storage Formats** are handled by a modular plugin system.
+
+### 1. Provider Capabilities
+| Provider | Read Metadata | Create Table | Add Partition | Drop Partition |
+| :--- | :---: | :---: | :---: | :---: |
+| **Mock** | ✅ | ✅ | ✅ | ✅ |
+| **HMS** | ✅ | ✅ | ✅ | ✅ |
+
+### 2. Storage Format Support (Engine Decoupled)
+Since the engine handles the data layer, all implemented formats work across **all providers** for reading and writing (if the provider supports the verb).
+
+| Format | Read Support | Write Support (via CALL) |
+| :--- | :---: | :---: |
+| **Parquet** | ✅ | ✅ |
+| **CSV** | ✅ | ✅ |
+| **JSON** | ✅ | ✅ |
 
 ## Running the tests
 Different tests can be created for DuckDB extensions. The primary way of testing DuckDB extensions should be the SQL tests in `./test/sql`. These SQL tests can be run using:
@@ -146,3 +207,20 @@ To set up debugging in CLion, there are two simple steps required. Firstly, in `
 ```
 
 The second step is to configure the unittest runner as a run/debug configuration. To do this, go to `Run -> Edit Configurations` and click `+ -> Cmake Application`. The target and executable should be `unittest`. This will run all the DuckDB tests. To specify only running the extension specific tests, add `--test-dir ../../.. [sql]` to the `Program Arguments`. Note that it is recommended to use the `unittest` executable for testing/development within CLion. The actual DuckDB CLI currently does not reliably work as a run target in CLion.
+
+## Troubleshooting
+
+If you ever encounter problems finding dependencies, make sure you actually set the `VCPKG_TOOLCHAIN_PATH` environment variable before running `make` or `cmake`. 
+
+```shell
+export VCPKG_TOOLCHAIN_PATH=`pwd`/vcpkg/scripts/buildsystems/vcpkg.cmake
+make
+```
+
+If you are still encountering the error it may be due to running the command without defining the variable and the cache working as intended. If that's the case, make sure you delete the cache before running the commands. Once it works it should continue working with make.
+
+```shell
+rm -rf build/release
+export VCPKG_TOOLCHAIN_PATH=`pwd`/vcpkg/scripts/buildsystems/vcpkg.cmake
+make
+```

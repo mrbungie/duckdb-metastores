@@ -26,15 +26,15 @@ ATTACH 'thrift://${HMS_LOCAL_ENDPOINT}' AS hms (TYPE metastore);
 query II
 EXPLAIN SELECT * FROM hms.metastore_ci.fixture_tbl_1_partitioned WHERE year='2023';
 ----
-physical_plan	<REGEX>:.*METASTORE_READ.*
+physical_plan	<REGEX>:.*METASTORE_(READ|CSV_SCAN).*
 
 query I
-SELECT (SELECT COUNT(*) FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_1_partitioned')) + (SELECT COUNT(*) FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_2')) + (SELECT COUNT(*) FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_3')) + (SELECT COUNT(*) FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_4')) + (SELECT COUNT(*) FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_5'));
+SELECT (SELECT COUNT(*) FROM metastore_table_info('hms', 'metastore_ci', 'fixture_tbl_1_partitioned')) + (SELECT COUNT(*) FROM metastore_table_info('hms', 'metastore_ci', 'fixture_tbl_2')) + (SELECT COUNT(*) FROM metastore_table_info('hms', 'metastore_ci', 'fixture_tbl_3')) + (SELECT COUNT(*) FROM metastore_table_info('hms', 'metastore_ci', 'fixture_tbl_4')) + (SELECT COUNT(*) FROM metastore_table_info('hms', 'metastore_ci', 'fixture_tbl_5'));
 ----
 5
 
 query I
-SELECT COUNT(*) FROM (SELECT * FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_1') WHERE lower(format) = 'csv' UNION ALL SELECT * FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_2') WHERE lower(format) = 'csv' UNION ALL SELECT * FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_3') WHERE lower(format) = 'csv' UNION ALL SELECT * FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_4') WHERE lower(format) = 'csv' UNION ALL SELECT * FROM metastore_scan('hms', 'metastore_ci', 'fixture_tbl_5') WHERE lower(format) = 'csv') t;
+SELECT COUNT(*) FROM (SELECT * FROM metastore_table_info('hms', 'metastore_ci', 'fixture_tbl_1') WHERE lower(format) = 'csv' UNION ALL SELECT * FROM metastore_table_info('hms', 'metastore_ci', 'fixture_tbl_2') WHERE lower(format) = 'csv' UNION ALL SELECT * FROM metastore_table_info('hms', 'metastore_ci', 'fixture_tbl_3') WHERE lower(format) = 'csv' UNION ALL SELECT * FROM metastore_table_info('hms', 'metastore_ci', 'fixture_tbl_4') WHERE lower(format) = 'csv' UNION ALL SELECT * FROM metastore_table_info('hms', 'metastore_ci', 'fixture_tbl_5') WHERE lower(format) = 'csv') t;
 ----
 5
 

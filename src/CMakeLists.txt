@@ -1,14 +1,34 @@
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
-
-add_subdirectory(auth)
-add_subdirectory(functions)
-add_subdirectory(planner)
-add_subdirectory(providers)
-
 add_library(
-  metastore_src_lib OBJECT metastore_extension.cpp metastore_functions.cpp
-                           metastore_runtime.cpp)
+  metastore_src_lib OBJECT 
+  metastore_extension.cpp 
+  metastore_runtime.cpp
+  metastore_secret_bridge.cpp
+  metastore_types.cpp
+  metastore_partition_cache.cpp
+  metastore_partition_predicate.cpp
+  metastore_replacement_scan.cpp 
+  metastore_storage_extension.cpp
+  metastore_utils.cpp
+  metastore_scan_plan.cpp
+  functions/metastore_table_info.cpp 
+  functions/metastore_read.cpp
+  functions/metastore_write.cpp
+  metastore_functions.cpp
+  providers/hms/hms_connector.cpp
+  providers/hms/hms_mapper.cpp
+  providers/hms/hms_config.cpp
+  providers/hms/hms_registration.cpp
+  providers/mock/mock_connector.cpp
+  providers/mock/mock_metastore.cpp
+  formats/format_reader.cpp
+  formats/parquet_reader.cpp 
+  formats/csv_reader.cpp
+  formats/json_reader.cpp
+)
+
 target_link_libraries(metastore_src_lib PRIVATE hms_thrift_lib)
-set(ALL_OBJECT_FILES
-    ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:metastore_src_lib>
+
+set(METASTORE_EXTENSION_OBJECTS
+    $<TARGET_OBJECTS:metastore_src_lib>
+    $<TARGET_OBJECTS:hms_thrift_lib>
     PARENT_SCOPE)

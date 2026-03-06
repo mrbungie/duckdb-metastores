@@ -1,0 +1,107 @@
+# name: test/sql/metastore/generic/metastore_full_flow.test
+# description: verify the full decoupled flow (Creation -> Insertion -> Pruning)
+# group: [generic]
+
+require metastore
+
+require parquet
+
+# --- SETUP MOCK ---
+statement ok
+CREATE TABLE mock_meta_ns(name VARCHAR);
+
+statement ok
+CREATE TABLE mock_meta_tbl(schema_name VARCHAR, table_name VARCHAR, location VARCHAR, format VARCHAR, partition_key VARCHAR);
+
+statement ok
+CREATE TABLE mock_meta_part(schema_name VARCHAR, table_name VARCHAR, part_value VARCHAR, location VARCHAR);
+
+statement ok
+CREATE TABLE mock_meta_col(schema_name VARCHAR, table_name VARCHAR, column_name VARCHAR, column_type VARCHAR, column_index INTEGER);
+
+statement ok
+INSERT INTO mock_meta_ns VALUES ('default');
+
+statement ok
+ATTACH 'mock://decoupled' AS decoupled (
+  TYPE metastore,
+  extra_options {
+    namespaces_table: 'mock_meta_ns',
+    tables_table: 'mock_meta_tbl',
+    partitions_table: 'mock_meta_part',
+    columns_table: 'mock_meta_col'
+  }
+);
+
+# --- 1. THE PRAGMA: Create & Bulk Insert ---
+statement ok
+CALL metastore_create_table('decoupled', 'default', 'sales',
+    location='sales_data_final/',
+    columns={'id': 'INTEGER', 'amount': 'INTEGER'},
+    partitions={'region': 'VARCHAR'}
+);
+
+statement ok
+CALL metastore_insert('decoupled', 'default', 'sales',
+    query='SELECT 1 as id, 100 as amount, ''north'' as region UNION ALL SELECT 2, 200, ''south'''
+);
+
+# --- 2. THE PUSHDOWN: Filtered Scan ---
+query II
+SELECT id, amount FROM decoupled.default.sales WHERE region = 'north';
+----
+1	100
+
+query III
+SELECT id, amount, region FROM decoupled.default.sales WHERE region = 'north' OR region = 'south' ORDER BY id;
+----
+1	100	north
+2	200	south
+
+query II
+SELECT id, amount FROM decoupled.default.sales WHERE region != 'north';
+----
+2	200
+
+# --- 3. VERIFY DECOUPLING: Different Formats ---
+statement ok
+CALL metastore_create_table('decoupled', 'default', 'logs',
+    location='logs_data_final/',
+    format='csv',
+    columns={'msg': 'VARCHAR'},
+    partitions={'level': 'VARCHAR'}
+);
+
+statement ok
+CALL metastore_insert('decoupled', 'default', 'logs',
+    query='SELECT ''Started'' as msg, ''INFO'' as level UNION ALL SELECT ''Crashed'', ''ERROR'''
+);
+
+query II
+SELECT msg, level FROM decoupled.default.logs WHERE level = 'ERROR';
+----
+Crashed	ERROR
+
+statement ok
+CALL metastore_create_table('decoupled', 'default', 'int_parts',
+    location='int_parts_data/',
+    columns={'id': 'INTEGER'},
+    partitions={'p': 'INT'}
+);
+
+statement ok
+CALL metastore_insert('decoupled', 'default', 'int_parts',
+    query='SELECT 1 AS id, 1 AS p UNION ALL SELECT 2, 2 UNION ALL SELECT 9, 9 UNION ALL SELECT 10, 10 UNION ALL SELECT 11, 11'
+);
+
+query I
+SELECT CAST(p AS INTEGER) FROM decoupled.default.int_parts WHERE CAST(p AS INTEGER) > 9 ORDER BY 1;
+----
+10
+11
+
+query I
+SELECT CAST(p AS INTEGER) FROM metastore_read('decoupled', 'default', 'int_parts') WHERE CAST(p AS INTEGER) > 9 ORDER BY 1;
+----
+10
+11

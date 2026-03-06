@@ -1,0 +1,147 @@
+# name: test/sql/metastore/generic/test_metastore_complex_join_agg.test
+# description: Complex join and aggregation over mock metastore tables
+# group: [generic]
+
+require metastore
+
+require parquet
+
+require json
+
+statement ok
+CREATE TABLE complex_mock_ns(name VARCHAR);
+
+statement ok
+INSERT INTO complex_mock_ns VALUES ('main');
+
+statement ok
+CREATE TABLE complex_mock_tabs(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  location VARCHAR,
+  format VARCHAR,
+  partition_key VARCHAR
+);
+
+statement ok
+CREATE TABLE complex_mock_parts(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  part_value VARCHAR,
+  location VARCHAR
+);
+
+statement ok
+CREATE TABLE complex_mock_cols(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  column_name VARCHAR,
+  column_type VARCHAR,
+  column_index INTEGER
+);
+
+statement ok
+ATTACH 'mock:///main' AS complex_mock (
+  TYPE metastore,
+  extra_options {
+    namespaces_table: 'complex_mock_ns',
+    tables_table: 'complex_mock_tabs',
+    partitions_table: 'complex_mock_parts',
+    columns_table: 'complex_mock_cols'
+  }
+);
+
+statement ok
+COPY (
+  SELECT * FROM (
+    VALUES
+      (1, 101, 120.50, 'us-east'),
+      (2, 102, 80.00, 'us-west'),
+      (3, 101, 210.25, 'us-east'),
+      (4, 103, 45.00, 'eu-central'),
+      (5, 104, 500.00, 'us-west'),
+      (6, 105, 130.75, 'eu-central')
+  ) t(order_id, customer_id, amount, region)
+) TO 'tmp_complex_mock_orders.parquet' (FORMAT PARQUET, OVERWRITE 1);
+
+statement ok
+COPY (
+  SELECT * FROM (
+    VALUES
+      (101, 'enterprise', true),
+      (102, 'smb', true),
+      (103, 'smb', false),
+      (104, 'enterprise', true),
+      (105, 'midmarket', true)
+  ) t(customer_id, customer_tier, is_active)
+) TO 'tmp_complex_mock_customers.csv' (FORMAT CSV, HEADER 1, OVERWRITE 1);
+
+statement ok
+COPY (
+  SELECT * FROM (
+    VALUES
+      ('s1', 1, 101, 'purchase', '2026-01-01 10:00:00'),
+      ('s2', 2, 102, 'view', '2026-01-02 09:00:00'),
+      ('s3', 3, 101, 'purchase', '2026-01-03 12:00:00'),
+      ('s4', 5, 104, 'purchase', '2026-01-04 15:00:00'),
+      ('s5', 6, 105, 'view', '2026-01-05 20:00:00'),
+      ('s6', 6, 105, 'purchase', '2026-01-06 08:00:00')
+  ) t(session_id, order_id, customer_id, event_type, event_ts)
+) TO 'tmp_complex_mock_events.json' (FORMAT JSON, OVERWRITE 1);
+
+statement ok
+INSERT INTO complex_mock_tabs VALUES
+('main', 'orders_pq', 'tmp_complex_mock_orders.parquet', 'parquet', ''),
+('main', 'customers_csv', 'tmp_complex_mock_customers.csv', 'csv', ''),
+('main', 'events_json', 'tmp_complex_mock_events.json', 'json', '');
+
+statement ok
+INSERT INTO complex_mock_cols VALUES
+('main', 'orders_pq', 'order_id', 'integer', 0),
+('main', 'orders_pq', 'customer_id', 'integer', 1),
+('main', 'orders_pq', 'amount', 'double', 2),
+('main', 'orders_pq', 'region', 'string', 3),
+('main', 'customers_csv', 'customer_id', 'integer', 0),
+('main', 'customers_csv', 'customer_tier', 'string', 1),
+('main', 'customers_csv', 'is_active', 'boolean', 2),
+('main', 'events_json', 'session_id', 'string', 0),
+('main', 'events_json', 'order_id', 'integer', 1),
+('main', 'events_json', 'customer_id', 'integer', 2),
+('main', 'events_json', 'event_type', 'string', 3),
+('main', 'events_json', 'event_ts', 'string', 4);
+
+query IIIIIIII
+WITH base AS (
+  SELECT
+    c.customer_tier,
+    o.region,
+    date_trunc('month', try_strptime(e.event_ts, '%Y-%m-%d %H:%M:%S')) AS event_month,
+    count(*) AS joined_rows,
+    sum(o.amount) AS gross_revenue,
+    approx_count_distinct(e.session_id) AS distinct_sessions,
+    sum(CASE WHEN e.event_type = 'purchase' THEN 1 ELSE 0 END) AS purchase_events
+  FROM complex_mock.main.orders_pq o
+  JOIN complex_mock.main.customers_csv c ON o.customer_id = c.customer_id
+  LEFT JOIN complex_mock.main.events_json e ON e.order_id = o.order_id AND e.customer_id = o.customer_id
+  WHERE o.amount > 50 AND c.is_active = true
+  GROUP BY 1, 2, 3
+), ranked AS (
+  SELECT *, dense_rank() OVER (PARTITION BY customer_tier ORDER BY gross_revenue DESC) AS rev_rank
+  FROM base
+)
+SELECT
+  customer_tier,
+  region,
+  event_month,
+  joined_rows,
+  round(gross_revenue, 2) AS gross_revenue,
+  distinct_sessions,
+  purchase_events,
+  rev_rank
+FROM ranked
+WHERE gross_revenue > 100
+ORDER BY customer_tier, rev_rank, region;
+----
+enterprise	us-west	2026-01-01	1	500.00	1	1	1
+enterprise	us-east	2026-01-01	2	330.75	2	2	2
+midmarket	eu-central	2026-01-01	2	261.50	2	1	1

@@ -21,4 +21,4 @@ DETACH ms2;
 statement error
 ATTACH 'arn:aws:glue:us-east-1:123456789012:catalog' AS ms3 (TYPE metastore);
 ----
-Only HMS provider is supported in this build
+Binder Error: Invalid Error: Could not infer metastore provider from endpoint. Use thrift://, thrift+http(s)://, or http(s):// for HMS, arn:aws:glue: for Glue, or https://...dataproc... for Dataproc.

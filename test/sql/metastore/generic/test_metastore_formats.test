@@ -1,0 +1,164 @@
+# name: test/sql/metastore/generic/test_metastore_formats.test
+# description: Test various data formats (Parquet, CSV, JSON) with the Mock provider using actual data
+# group: [generic]
+
+require metastore
+
+require parquet
+
+require json
+
+# 1. Setup Mock Tables
+statement ok
+CREATE TABLE mock_ns(name VARCHAR);
+
+statement ok
+INSERT INTO mock_ns VALUES ('main');
+
+statement ok
+CREATE TABLE mock_tabs(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  location VARCHAR,
+  format VARCHAR,
+  partition_key VARCHAR
+);
+
+statement ok
+CREATE TABLE mock_parts(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  part_value VARCHAR,
+  location VARCHAR
+);
+
+statement ok
+CREATE TABLE mock_cols(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  column_name VARCHAR,
+  column_type VARCHAR,
+  column_index INTEGER
+);
+
+# 2. Attach Mock Catalog
+statement ok
+ATTACH 'mock:///main' AS ms (
+  TYPE metastore,
+  extra_options {
+    namespaces_table: 'mock_ns',
+    tables_table: 'mock_tabs',
+    partitions_table: 'mock_parts',
+    columns_table: 'mock_cols'
+  }
+);
+
+# 3. Test Parquet (non-partitioned)
+statement ok
+COPY (SELECT 42 as id, 'parquet_data' as val, 'all' as tag) TO 'dir_parquet' (FORMAT PARQUET, PARTITION_BY tag, OVERWRITE 1);
+
+statement ok
+INSERT INTO mock_tabs VALUES ('main', 'tab_parquet', 'dir_parquet/tag=all/', 'parquet', '');
+
+# Explicit columns for parquet (even though not needed, good to test)
+statement ok
+INSERT INTO mock_cols VALUES 
+('main', 'tab_parquet', 'id', 'integer', 0),
+('main', 'tab_parquet', 'val', 'string', 1);
+
+query II
+SELECT id, val FROM ms.main.tab_parquet;
+----
+42	parquet_data
+
+# 4. Test Parquet (Partitioned)
+statement ok
+COPY (SELECT 10 as id, 'A' as part UNION ALL SELECT 20 as id, 'B' as part) TO 'data_part' (FORMAT PARQUET, PARTITION_BY part, OVERWRITE 1);
+
+statement ok
+INSERT INTO mock_tabs VALUES ('main', 'tab_part', 'data_part/', 'parquet', 'part');
+
+statement ok
+INSERT INTO mock_parts VALUES 
+('main', 'tab_part', 'A', 'data_part/part=A/'),
+('main', 'tab_part', 'B', 'data_part/part=B/');
+
+# DuckDB should auto-detect 'part' column from the path
+query II
+SELECT id, part FROM ms.main.tab_part ORDER BY id;
+----
+10	A
+20	B
+
+# 5. Test CSV (Explicit Columns)
+statement ok
+COPY (SELECT 100 as id, 'csv_val' as name, 'all' as tag) TO 'dir_csv' (FORMAT CSV, HEADER 0, PARTITION_BY tag, OVERWRITE 1);
+
+statement ok
+INSERT INTO mock_tabs VALUES ('main', 'tab_csv', 'dir_csv/tag=all/', 'csv', '');
+
+statement ok
+INSERT INTO mock_cols VALUES 
+('main', 'tab_csv', 'id', 'integer', 0),
+('main', 'tab_csv', 'name', 'string', 1);
+
+query II
+SELECT id, name FROM ms.main.tab_csv;
+----
+100	csv_val
+
+# 6. Test JSON (Auto-detect from file)
+# Use CSV to create a unique directory
+statement ok
+COPY (SELECT 1 as x, 1 as dummy) TO 'dir_json' (FORMAT CSV, PARTITION_BY dummy, OVERWRITE 1);
+
+statement ok
+COPY (SELECT 200 as id, 'json_val' as name) TO 'dir_json/dummy=1/data.json' (FORMAT JSON);
+
+# Point DIRECTLY to the .json file to test no-globbing logic
+statement ok
+INSERT INTO mock_tabs VALUES ('main', 'tab_json', 'dir_json/dummy=1/data.json', 'json', '');
+
+# No columns inserted for tab_json -> should trigger auto_detect
+query II
+SELECT id, name FROM ms.main.tab_json;
+----
+200	json_val
+
+# 7. Test Multiple Partition Columns
+statement ok
+COPY (
+  SELECT 1000 as id, 2024 as year, 1 as month 
+  UNION ALL 
+  SELECT 2000 as id, 2024 as year, 2 as month
+) TO 'data_multi' (FORMAT PARQUET, PARTITION_BY (year, month), OVERWRITE 1);
+
+statement ok
+INSERT INTO mock_tabs VALUES ('main', 'tab_multi', 'data_multi/', 'parquet', 'year,month');
+
+statement ok
+INSERT INTO mock_parts VALUES 
+('main', 'tab_multi', '2024,1', 'data_multi/year=2024/month=1/'),
+('main', 'tab_multi', '2024,2', 'data_multi/year=2024/month=2/');
+
+query III
+SELECT id, year, month FROM ms.main.tab_multi ORDER BY id;
+----
+1000	2024	1
+2000	2024	2
+
+# 8. Verify metastore_table_info for all
+query TTT
+SELECT table_name, location, format FROM metastore_table_info('ms', 'main', 'tab_parquet')
+UNION ALL
+SELECT table_name, location, format FROM metastore_table_info('ms', 'main', 'tab_csv')
+UNION ALL
+SELECT table_name, location, format FROM metastore_table_info('ms', 'main', 'tab_json')
+UNION ALL
+SELECT table_name, location, format FROM metastore_table_info('ms', 'main', 'tab_multi')
+ORDER BY table_name;
+----
+tab_csv	dir_csv/tag=all/	CSV
+tab_json	dir_json/dummy=1/data.json	JSON
+tab_multi	data_multi/	Parquet
+tab_parquet	dir_parquet/tag=all/	Parquet

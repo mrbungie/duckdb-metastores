@@ -9,8 +9,6 @@
 #include <thrift/transport/TBufferTransports.h>
 #include <thrift/protocol/TBinaryProtocol.h>
 
-#include <optional>
-#include <sstream>
 #include <functional>
 #include <filesystem>
 #include <memory>
@@ -23,6 +21,7 @@ using Apache::Hadoop::Hive::GetTableRequest;
 using Apache::Hadoop::Hive::GetTableResult;
 using Apache::Hadoop::Hive::MetaException;
 using Apache::Hadoop::Hive::NoSuchObjectException;
+using Apache::Hadoop::Hive::Partition;
 using Apache::Hadoop::Hive::Table;
 using Apache::Hadoop::Hive::ThriftHiveMetastoreClient;
 using apache::thrift::TException;
@@ -35,7 +34,7 @@ using apache::thrift::transport::TTransportException;
 
 struct HmsClientContext {
 	std::shared_ptr<TTransport> transport;
-	std::unique_ptr<ThriftHiveMetastoreClient> client;
+	duckdb::unique_ptr<ThriftHiveMetastoreClient> client;
 
 	HmsClientContext() = default;
 	HmsClientContext(HmsClientContext &&) = default;
@@ -56,17 +55,11 @@ MetastoreResult<HmsClientContext> ConnectHms(const HmsConfig &config) {
 		std::shared_ptr<TTransport> transport(new TBufferedTransport(socket));
 		std::shared_ptr<TProtocol> protocol(new TBinaryProtocol(transport));
 
-		// We could configure timeout on TSocket if needed.
-		// auto tsocket = std::dynamic_pointer_cast<TSocket>(socket);
-		// tsocket->setConnTimeout(10000);
-		// tsocket->setRecvTimeout(10000);
-		// tsocket->setSendTimeout(10000);
-
 		transport->open();
 
 		HmsClientContext ctx;
 		ctx.transport = transport;
-		ctx.client = std::make_unique<ThriftHiveMetastoreClient>(protocol);
+		ctx.client = duckdb::make_uniq<ThriftHiveMetastoreClient>(protocol);
 		return MetastoreResult<HmsClientContext>::Success(std::move(ctx));
 	} catch (const TException &tx) {
 		return MetastoreResult<HmsClientContext>::Error(MetastoreErrorCode::Transient, "HMS socket connect failed",
@@ -76,9 +69,9 @@ MetastoreResult<HmsClientContext> ConnectHms(const HmsConfig &config) {
 
 std::vector<std::string> ParsePartitionNameValues(const std::string &partition_name) {
 	std::vector<std::string> values;
-	std::stringstream ss(partition_name);
+	stringstream ss(partition_name);
 	std::string segment;
-	while (std::getline(ss, segment, '/')) {
+	while (getline(ss, segment, '/')) {
 		auto eq_pos = segment.find('=');
 		if (eq_pos == std::string::npos || eq_pos + 1 >= segment.size()) {
 			values.push_back(segment);
@@ -154,40 +147,10 @@ std::vector<std::string> DiscoverLocalPartitionNames(const std::string &table_lo
 
 } // namespace
 
-HmsConnector::HmsConnector(HmsConfig config) : config_(std::move(config)) {
+HmsConnector::HmsConnector(string ns, HmsConfig config) : bound_namespace_(std::move(ns)), config_(std::move(config)) {
 }
 
-MetastoreResult<std::vector<MetastoreNamespace>> HmsConnector::ListNamespaces() {
-	auto conn_res = ConnectHms(config_);
-	if (!conn_res.IsOk()) {
-		return MetastoreResult<std::vector<MetastoreNamespace>>::Error(conn_res.error.code, conn_res.error.message,
-		                                                               conn_res.error.detail, conn_res.error.retryable);
-	}
-
-	std::vector<std::string> db_names;
-	try {
-		conn_res.value.client->get_all_databases(db_names);
-	} catch (const MetaException &e) {
-		return MetastoreResult<std::vector<MetastoreNamespace>>::Error(MetastoreErrorCode::Transient,
-		                                                               "HMS retrieve error", e.message, true);
-	} catch (const TException &tx) {
-		return MetastoreResult<std::vector<MetastoreNamespace>>::Error(MetastoreErrorCode::Transient,
-		                                                               "HMS network error", tx.what(), true);
-	}
-
-	namespaces_cache = db_names;
-	std::vector<MetastoreNamespace> result;
-	result.reserve(db_names.size());
-	for (const auto &name : db_names) {
-		MetastoreNamespace ns;
-		ns.name = name;
-		ns.catalog = "hms";
-		result.push_back(std::move(ns));
-	}
-	return MetastoreResult<std::vector<MetastoreNamespace>>::Success(std::move(result));
-}
-
-MetastoreResult<std::vector<std::string>> HmsConnector::ListTables(const std::string &namespace_name) {
+MetastoreResult<std::vector<std::string>> HmsConnector::ListTables() {
 	auto conn_res = ConnectHms(config_);
 	if (!conn_res.IsOk()) {
 		return MetastoreResult<std::vector<std::string>>::Error(conn_res.error.code, conn_res.error.message,
@@ -196,7 +159,7 @@ MetastoreResult<std::vector<std::string>> HmsConnector::ListTables(const std::st
 
 	std::vector<std::string> tables;
 	try {
-		conn_res.value.client->get_all_tables(tables, namespace_name);
+		conn_res.value.client->get_all_tables(tables, bound_namespace_);
 	} catch (const MetaException &e) {
 		return MetastoreResult<std::vector<std::string>>::Error(MetastoreErrorCode::Transient, "HMS retrieve error",
 		                                                        e.message, true);
@@ -208,8 +171,7 @@ MetastoreResult<std::vector<std::string>> HmsConnector::ListTables(const std::st
 	return MetastoreResult<std::vector<std::string>>::Success(std::move(tables));
 }
 
-MetastoreResult<MetastoreTable> HmsConnector::GetTable(const std::string &namespace_name,
-                                                       const std::string &table_name) {
+MetastoreResult<MetastoreTable> HmsConnector::GetTable(const std::string &table_name) {
 	auto conn_res = ConnectHms(config_);
 	if (!conn_res.IsOk()) {
 		return MetastoreResult<MetastoreTable>::Error(conn_res.error.code, conn_res.error.message,
@@ -218,7 +180,7 @@ MetastoreResult<MetastoreTable> HmsConnector::GetTable(const std::string &namesp
 
 	GetTableResult res;
 	GetTableRequest req;
-	req.__set_dbName(namespace_name);
+	req.__set_dbName(bound_namespace_);
 	req.__set_tblName(table_name);
 	try {
 		conn_res.value.client->get_table_req(res, req);
@@ -240,10 +202,15 @@ MetastoreResult<MetastoreTable> HmsConnector::GetTable(const std::string &namesp
 		sd.location = hms_table.sd.location;
 		sd.input_format = hms_table.sd.inputFormat;
 		sd.output_format = hms_table.sd.outputFormat;
-		if (hms_table.sd.__isset.serdeInfo) {
+		if (!hms_table.sd.serdeInfo.serializationLib.empty()) {
 			sd.serde_class = hms_table.sd.serdeInfo.serializationLib;
-			sd.serde_parameters = std::unordered_map<std::string, std::string>(
-			    hms_table.sd.serdeInfo.parameters.begin(), hms_table.sd.serdeInfo.parameters.end());
+		}
+		sd.serde_parameters = std::unordered_map<std::string, std::string>(
+		    hms_table.sd.serdeInfo.parameters.begin(), hms_table.sd.serdeInfo.parameters.end());
+		for (const auto &entry : hms_table.sd.parameters) {
+			if (sd.serde_parameters.find(entry.first) == sd.serde_parameters.end()) {
+				sd.serde_parameters[entry.first] = entry.second;
+			}
 		}
 		for (const auto &col : hms_table.sd.cols) {
 			MetastoreColumn c;
@@ -262,8 +229,8 @@ MetastoreResult<MetastoreTable> HmsConnector::GetTable(const std::string &namesp
 	}
 
 	MetastoreTableProperties properties(hms_table.parameters.begin(), hms_table.parameters.end());
-	auto mapped =
-	    HmsMapper::MapTable("hms", namespace_name, table_name, std::move(sd), std::move(p_spec), std::move(properties));
+	auto mapped = HmsMapper::MapTable("hms", bound_namespace_, table_name, std::move(sd), std::move(p_spec),
+	                                  std::move(properties));
 	if (!mapped.IsOk()) {
 		return mapped;
 	}
@@ -273,22 +240,39 @@ MetastoreResult<MetastoreTable> HmsConnector::GetTable(const std::string &namesp
 	return MetastoreResult<MetastoreTable>::Success(std::move(final_table));
 }
 
-MetastoreResult<std::vector<MetastorePartitionValue>> HmsConnector::ListPartitions(const std::string &namespace_name,
-                                                                                   const std::string &table_name,
+MetastoreResult<std::vector<MetastorePartitionValue>> HmsConnector::ListPartitions(const std::string &table_name,
                                                                                    const std::string &predicate) {
-	(void)predicate;
-
 	auto conn_res = ConnectHms(config_);
 	if (!conn_res.IsOk()) {
 		return MetastoreResult<std::vector<MetastorePartitionValue>>::Error(
 		    conn_res.error.code, conn_res.error.message, conn_res.error.detail, conn_res.error.retryable);
 	}
-
 	std::vector<std::string> partition_names;
+
+	if (!predicate.empty()) {
+		try {
+			std::vector<Partition> hms_parts;
+			conn_res.value.client->get_partitions_by_filter(hms_parts, bound_namespace_, table_name, predicate, -1);
+
+			std::vector<MetastorePartitionValue> result;
+			result.reserve(hms_parts.size());
+			for (auto &hms_part : hms_parts) {
+				MetastorePartitionValue partition;
+				partition.values = hms_part.values;
+				partition.location = NormalizeFileLocation(hms_part.sd.location);
+				result.push_back(std::move(partition));
+			}
+			return MetastoreResult<std::vector<MetastorePartitionValue>>::Success(std::move(result));
+		} catch (const TException &) {
+			partition_names.clear();
+		} catch (...) {
+			partition_names.clear();
+		}
+	}
+
 	try {
-		conn_res.value.client->get_partition_names(partition_names, namespace_name, table_name, -1);
+		conn_res.value.client->get_partition_names(partition_names, bound_namespace_, table_name, -1);
 	} catch (const NoSuchObjectException &) {
-		// Ignored, we just yield an empty list
 		partition_names.clear();
 	} catch (const MetaException &e) {
 		return MetastoreResult<std::vector<MetastorePartitionValue>>::Error(MetastoreErrorCode::Transient,
@@ -298,7 +282,7 @@ MetastoreResult<std::vector<MetastorePartitionValue>> HmsConnector::ListPartitio
 		                                                                    "HMS network error", tx.what(), true);
 	}
 
-	auto table_result = GetTable(namespace_name, table_name);
+	auto table_result = GetTable(table_name);
 	if (!table_result.IsOk()) {
 		return MetastoreResult<std::vector<MetastorePartitionValue>>::Error(
 		    table_result.error.code, std::move(table_result.error.message), std::move(table_result.error.detail),
@@ -332,9 +316,8 @@ MetastoreResult<std::vector<MetastorePartitionValue>> HmsConnector::ListPartitio
 	return MetastoreResult<std::vector<MetastorePartitionValue>>::Success(std::move(result));
 }
 
-MetastoreResult<MetastoreTableProperties> HmsConnector::GetTableStats(const std::string &namespace_name,
-                                                                      const std::string &table_name) {
-	auto table_result = GetTable(namespace_name, table_name);
+MetastoreResult<MetastoreTableProperties> HmsConnector::GetTableStats(const std::string &table_name) {
+	auto table_result = GetTable(table_name);
 	if (!table_result.IsOk()) {
 		return MetastoreResult<MetastoreTableProperties>::Error(
 		    table_result.error.code, std::move(table_result.error.message), std::move(table_result.error.detail),
@@ -343,87 +326,72 @@ MetastoreResult<MetastoreTableProperties> HmsConnector::GetTableStats(const std:
 	return MetastoreResult<MetastoreTableProperties>::Success(std::move(table_result.value.properties));
 }
 
-//===--------------------------------------------------------------------===//
-// ParseHmsEndpoint
-//===--------------------------------------------------------------------===//
-static bool ParsePort(const std::string &port_str, uint16_t &port_out) {
-	if (port_str.empty()) {
-		return false;
+MetastoreResult<bool> HmsConnector::CreateTable(const MetastoreTable &table) {
+	auto conn_res = ConnectHms(config_);
+	if (!conn_res.IsOk()) {
+		return MetastoreResult<bool>::Error(conn_res.error.code, conn_res.error.message, conn_res.error.detail,
+		                                    conn_res.error.retryable);
 	}
-	for (char c : port_str) {
-		if (c < '0' || c > '9') {
-			return false;
-		}
-	}
-	uint64_t val;
+
+	Apache::Hadoop::Hive::Table hms_table;
+	HmsMapper::ToHmsTable(table, &hms_table);
+	hms_table.dbName = bound_namespace_;
+
 	try {
-		val = std::stoul(port_str);
-	} catch (...) {
-		return false;
+		conn_res.value.client->create_table(hms_table);
+		return MetastoreResult<bool>::Success(true);
+	} catch (const TException &tx) {
+		return MetastoreResult<bool>::Error(MetastoreErrorCode::Transient, "HMS create table failed", tx.what(), true);
 	}
-	if (val == 0 || val > 65535) {
-		return false;
-	}
-	port_out = static_cast<uint16_t>(val);
-	return true;
 }
 
-HmsConfig ParseHmsEndpoint(const std::string &endpoint) {
-	MetastoreErrorTag tag {"hms", "ParseHmsEndpoint", false};
-
-	if (endpoint.empty()) {
-		throw MetastoreException(MetastoreErrorCode::InvalidConfig, tag, "HMS endpoint URI is empty");
+MetastoreResult<bool> HmsConnector::AddPartition(const std::string &table_name,
+                                                 const MetastorePartitionValue &partition) {
+	auto conn_res = ConnectHms(config_);
+	if (!conn_res.IsOk()) {
+		return MetastoreResult<bool>::Error(conn_res.error.code, conn_res.error.message, conn_res.error.detail,
+		                                    conn_res.error.retryable);
 	}
 
-	HmsConfig config;
-	std::string remainder;
-
-	// Detect and strip scheme
-	const std::string thrift_ssl_scheme = "thrift+ssl://";
-	const std::string thrift_scheme = "thrift://";
-
-	if (endpoint.size() >= thrift_ssl_scheme.size() &&
-	    endpoint.substr(0, thrift_ssl_scheme.size()) == thrift_ssl_scheme) {
-		config.transport = HmsTransport::ThriftTLS;
-		remainder = endpoint.substr(thrift_ssl_scheme.size());
-	} else if (endpoint.size() >= thrift_scheme.size() && endpoint.substr(0, thrift_scheme.size()) == thrift_scheme) {
-		config.transport = HmsTransport::Thrift;
-		remainder = endpoint.substr(thrift_scheme.size());
-	} else {
-		config.transport = HmsTransport::Thrift;
-		remainder = endpoint;
+	auto table_info = GetTable(table_name);
+	if (!table_info.IsOk()) {
+		return MetastoreResult<bool>::Error(table_info.error.code, table_info.error.message);
 	}
 
-	if (remainder.empty()) {
-		throw MetastoreException(MetastoreErrorCode::InvalidConfig, tag,
-		                         "HMS endpoint URI has no host: '" + endpoint + "'");
+	Apache::Hadoop::Hive::Partition hms_part;
+	HmsMapper::ToHmsPartition(table_name, partition, &hms_part);
+	hms_part.dbName = bound_namespace_;
+
+	// We need to copy the partition's storage descriptor from the table for completeness
+	Apache::Hadoop::Hive::Table hms_table;
+	HmsMapper::ToHmsTable(table_info.value, &hms_table);
+	hms_part.sd = hms_table.sd;
+	hms_part.sd.location = partition.location;
+
+	try {
+		Apache::Hadoop::Hive::Partition out_part;
+		conn_res.value.client->add_partition(out_part, hms_part);
+		return MetastoreResult<bool>::Success(true);
+	} catch (const TException &tx) {
+		return MetastoreResult<bool>::Error(MetastoreErrorCode::Transient, "HMS add partition failed", tx.what(), true);
+	}
+}
+
+MetastoreResult<bool> HmsConnector::DropPartition(const std::string &table_name,
+                                                  const std::vector<std::string> &values) {
+	auto conn_res = ConnectHms(config_);
+	if (!conn_res.IsOk()) {
+		return MetastoreResult<bool>::Error(conn_res.error.code, conn_res.error.message, conn_res.error.detail,
+		                                    conn_res.error.retryable);
 	}
 
-	// Split host:port
-	auto colon_pos = remainder.rfind(':');
-	if (colon_pos != std::string::npos && colon_pos > 0) {
-		std::string host_part = remainder.substr(0, colon_pos);
-		std::string port_part = remainder.substr(colon_pos + 1);
-
-		uint16_t parsed_port;
-		if (ParsePort(port_part, parsed_port)) {
-			config.endpoint = host_part;
-			config.port = parsed_port;
-		} else {
-			throw MetastoreException(MetastoreErrorCode::InvalidConfig, tag,
-			                         "Invalid port in HMS endpoint URI: '" + endpoint + "'");
-		}
-	} else {
-		config.endpoint = remainder;
-		config.port = 9083;
+	try {
+		conn_res.value.client->drop_partition(bound_namespace_, table_name, values, true);
+		return MetastoreResult<bool>::Success(true);
+	} catch (const TException &tx) {
+		return MetastoreResult<bool>::Error(MetastoreErrorCode::Transient, "HMS drop partition failed", tx.what(),
+		                                    true);
 	}
-
-	if (config.endpoint.empty()) {
-		throw MetastoreException(MetastoreErrorCode::InvalidConfig, tag,
-		                         "HMS endpoint URI has empty host: '" + endpoint + "'");
-	}
-
-	return config;
 }
 
 } // namespace duckdb

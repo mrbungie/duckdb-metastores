@@ -1,32 +1,32 @@
 # name: test/sql/metastore/generic/scan_validation.test
-# description: validate metastore_scan argument constraints (count, nulls, empty strings)
+# description: validate metastore_table_info argument constraints (count, nulls, empty strings)
 # group: [generic]
 
 require metastore
 
 # Valid call: exactly 3 non-empty VARCHAR args must succeed and return empty result
 statement error
-SELECT * FROM metastore_scan('catalog', 'schema', 'table_name');
+SELECT * FROM metastore_table_info('catalog', 'schema', 'table_name');
 ----
-Catalog is not attached
+Catalog is not attached as metastore, or not found: catalog
 
 # ---- Missing argument tests ----
 
 # Missing all 3 required arguments
 statement error
-SELECT * FROM metastore_scan();
+SELECT * FROM metastore_table_info();
 ----
 No function matches the given name and argument types
 
 # Missing 2 arguments (only 1 provided)
 statement error
-SELECT * FROM metastore_scan('catalog_only');
+SELECT * FROM metastore_table_info('catalog_only');
 ----
 No function matches the given name and argument types
 
 # Missing 1 argument (only 2 provided)
 statement error
-SELECT * FROM metastore_scan('catalog', 'schema');
+SELECT * FROM metastore_table_info('catalog', 'schema');
 ----
 No function matches the given name and argument types
 
@@ -34,19 +34,19 @@ No function matches the given name and argument types
 
 # First argument (catalog) is NULL
 statement error
-SELECT * FROM metastore_scan(NULL, 'schema', 'table_name');
+SELECT * FROM metastore_table_info(NULL, 'schema', 'table_name');
 ----
 cannot be NULL
 
 # Second argument (schema) is NULL
 statement error
-SELECT * FROM metastore_scan('catalog', NULL, 'table_name');
+SELECT * FROM metastore_table_info('catalog', NULL, 'table_name');
 ----
 cannot be NULL
 
 # Third argument (table_name) is NULL
 statement error
-SELECT * FROM metastore_scan('catalog', 'schema', NULL);
+SELECT * FROM metastore_table_info('catalog', 'schema', NULL);
 ----
 cannot be NULL
 
@@ -54,19 +54,19 @@ cannot be NULL
 
 # First argument (catalog) is empty string
 statement error
-SELECT * FROM metastore_scan('', 'schema', 'table_name');
+SELECT * FROM metastore_table_info('', 'schema', 'table_name');
 ----
 cannot be empty
 
 # Second argument (schema) is empty string
 statement error
-SELECT * FROM metastore_scan('catalog', '', 'table_name');
+SELECT * FROM metastore_table_info('catalog', '', 'table_name');
 ----
 cannot be empty
 
 # Third argument (table_name) is empty string
 statement error
-SELECT * FROM metastore_scan('catalog', 'schema', '');
+SELECT * FROM metastore_table_info('catalog', 'schema', '');
 ----
 cannot be empty
 
@@ -75,7 +75,7 @@ cannot be empty
 # Column count: 5 columns (table_catalog, table_schema, table_name, location, format)
 statement error
 SELECT COUNT(*) FROM (
-    SELECT * FROM metastore_scan('my_catalog', 'my_schema', 'my_table')
+    SELECT * FROM metastore_table_info('my_catalog', 'my_schema', 'my_table')
 );
 ----
-Catalog is not attached as metastore: my_catalog
+Catalog is not attached as metastore, or not found: my_catalog

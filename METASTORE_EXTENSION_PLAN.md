@@ -186,7 +186,7 @@ Goal: establish reusable framework before provider-specific work.
 
 - `ATTACH '<uri-or-name>' AS <db_alias> (TYPE metastore, PROVIDER <...>, ...)`
 - Table function fallback:
-  - `metastore_scan('<catalog>', '<schema>', '<table>' [, options])`
+  - `metastore_table_info('<catalog>', '<schema>', '<table>' [, options])`
 
 ### 0.3 Generic metastore model
 

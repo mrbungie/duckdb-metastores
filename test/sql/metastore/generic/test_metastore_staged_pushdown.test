@@ -1,0 +1,86 @@
+# name: test/sql/metastore/generic/test_metastore_staged_pushdown.test
+# description: Validate staged partition and reader pushdown behavior
+# group: [generic]
+
+require metastore
+
+require parquet
+
+statement ok
+CREATE TABLE ms_stage_ns(name VARCHAR);
+
+statement ok
+INSERT INTO ms_stage_ns VALUES ('main');
+
+statement ok
+CREATE TABLE ms_stage_tabs(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  location VARCHAR,
+  format VARCHAR,
+  partition_key VARCHAR
+);
+
+statement ok
+CREATE TABLE ms_stage_parts(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  part_value VARCHAR,
+  location VARCHAR
+);
+
+statement ok
+CREATE TABLE ms_stage_cols(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  column_name VARCHAR,
+  column_type VARCHAR,
+  column_index INTEGER
+);
+
+statement ok
+ATTACH 'mock:///main' AS ms_stage (
+  TYPE metastore,
+  extra_options {
+    namespaces_table: 'ms_stage_ns',
+    tables_table: 'ms_stage_tabs',
+    partitions_table: 'ms_stage_parts',
+    columns_table: 'ms_stage_cols'
+  }
+);
+
+statement ok
+COPY (
+  SELECT 11 AS id, 2023 AS year, 1 AS month, 'old' AS value
+  UNION ALL
+  SELECT 22 AS id, 2024 AS year, 1 AS month, 'new' AS value
+) TO 'ms_stage_data' (FORMAT PARQUET, PARTITION_BY (year, month), OVERWRITE 1);
+
+statement ok
+INSERT INTO ms_stage_tabs VALUES ('main', 'tab_stage', 'ms_stage_data/', 'parquet', 'year,month');
+
+statement ok
+INSERT INTO ms_stage_parts VALUES
+('main', 'tab_stage', '2023,1', 'ms_stage_data/year=2023/month=1/'),
+('main', 'tab_stage', '2024,1', 'ms_stage_data/year=2024/month=1/');
+
+statement ok
+INSERT INTO ms_stage_cols VALUES
+('main', 'tab_stage', 'id', 'integer', 0),
+('main', 'tab_stage', 'value', 'string', 1);
+
+query II
+SELECT year, id
+FROM ms_stage.main.tab_stage
+WHERE CAST(year AS INTEGER) >= 2024 AND id = 22
+ORDER BY year, id;
+----
+2024	22
+
+query II
+SELECT year, id
+FROM metastore_read('ms_stage', 'main', 'tab_stage')
+WHERE CAST(year AS INTEGER) >= 2024 AND id = 22
+ORDER BY year, id;
+----
+2024	22

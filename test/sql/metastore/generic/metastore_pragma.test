@@ -1,0 +1,127 @@
+# name: test/sql/metastore/generic/metastore_pragma.test
+# description: verify metastore write pragmas via CALL
+# group: [generic]
+
+require metastore
+
+require parquet
+
+# --- SETUP ---
+statement ok
+CREATE TABLE namespaces(name VARCHAR);
+
+statement ok
+CREATE TABLE tables(schema_name VARCHAR, table_name VARCHAR, location VARCHAR, format VARCHAR, partition_key VARCHAR);
+
+statement ok
+CREATE TABLE partitions(schema_name VARCHAR, table_name VARCHAR, part_value VARCHAR, location VARCHAR);
+
+statement ok
+CREATE TABLE columns(schema_name VARCHAR, table_name VARCHAR, column_name VARCHAR, column_type VARCHAR, column_index INTEGER);
+
+# Add a default namespace
+statement ok
+INSERT INTO namespaces VALUES ('default');
+
+# Attach the mock catalog
+statement ok
+ATTACH 'mock://local' AS mock (
+  TYPE metastore,
+  extra_options {
+    namespaces_table: 'namespaces',
+    tables_table: 'tables',
+    partitions_table: 'partitions',
+    columns_table: 'columns'
+  }
+);
+
+# --- 1. NULL HANDLING TEST ---
+statement ok
+CALL metastore_create_table('mock', 'default', 'null_test',
+    location='/tmp/null_test_final/',
+    columns={'id': 'BIGINT'},
+    partitions={'dt': 'VARCHAR'}
+);
+
+statement ok
+CALL metastore_insert('mock', 'default', 'null_test',
+    query='SELECT 1 as id, NULL as dt UNION ALL SELECT 2, ''2023-11-01'''
+);
+
+# Verify NULL row is registered and queryable
+query II
+SELECT id, dt FROM mock.default.null_test ORDER BY id;
+----
+1	NULL
+2	2023-11-01
+
+# --- 2. COMPOSITE PARTITION KEY TEST ---
+statement ok
+CALL metastore_create_table('mock', 'default', 'composite_test',
+    location='/tmp/composite_test_final/',
+    columns={'id': 'BIGINT'},
+    partitions={'year': 'INTEGER', 'month': 'INTEGER'}
+);
+
+statement ok
+CALL metastore_insert('mock', 'default', 'composite_test',
+    query='SELECT 100 as id, 2023 as year, 10 as month UNION ALL SELECT 200, 2023, 11'
+);
+
+query III
+SELECT id, year, month FROM mock.default.composite_test ORDER BY id;
+----
+100	2023	10
+200	2023	11
+
+# --- 3. TARGETED INSERTION TEST ---
+statement ok
+CALL metastore_create_table('mock', 'default', 'targeted_test',
+    location='/tmp/targeted_test_final/',
+    columns={'id': 'BIGINT'},
+    partitions={'grp': 'VARCHAR'}
+);
+
+statement ok
+CALL metastore_insert('mock', 'default', 'targeted_test',
+    query='SELECT 500 as id',
+    values=['A']
+);
+
+query II
+SELECT id, grp FROM mock.default.targeted_test;
+----
+500	A
+
+# --- 4. CSV FORMAT TEST ---
+statement ok
+CALL metastore_create_table('mock', 'default', 'csv_test',
+    location='/tmp/csv_test_final/',
+    format='csv',
+    columns={'name': 'VARCHAR'},
+    partitions={'tag': 'VARCHAR'}
+);
+
+statement ok
+CALL metastore_insert('mock', 'default', 'csv_test',
+    query='SELECT ''Duck'' as name, ''bird'' as tag'
+);
+
+query II
+SELECT name, tag FROM mock.default.csv_test;
+----
+Duck	bird
+
+# --- 5. ERROR CASE: MISSING PARTITION COLUMN ---
+statement error
+CALL metastore_insert('mock', 'default', 'null_test',
+    query='SELECT 1000 as id'
+);
+----
+Failed to discover partitions
+
+# --- 6. EDGE CASE: EMPTY QUERY ---
+statement ok
+CALL metastore_insert('mock', 'default', 'null_test',
+    query='SELECT 1 as id, ''2024-01-01'' as dt WHERE 1=0'
+);

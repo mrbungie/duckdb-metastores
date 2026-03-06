@@ -1,0 +1,76 @@
+# name: test/sql/metastore/generic/test_metastore_max_partitions.test
+# description: Test metastore_max_partitions guardrail
+# group: [generic]
+
+require metastore
+
+# 1. Seed the mock metadata tables
+statement ok
+CREATE TABLE mock_ms_namespaces(name VARCHAR);
+
+statement ok
+INSERT INTO mock_ms_namespaces VALUES ('main');
+
+statement ok
+CREATE TABLE mock_ms_tables(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  location VARCHAR,
+  format VARCHAR,
+  partition_key VARCHAR
+);
+
+statement ok
+INSERT INTO mock_ms_tables VALUES
+('main','partitioned_table','mock://path/to/partitioned_table','parquet','part');
+
+statement ok
+CREATE TABLE mock_ms_partitions(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  part_value VARCHAR,
+  location VARCHAR
+);
+
+statement ok
+INSERT INTO mock_ms_partitions VALUES
+('main','partitioned_table','0','mock://path/to/partitioned_table/part=0'),
+('main','partitioned_table','1','mock://path/to/partitioned_table/part=1'),
+('main','partitioned_table','2','mock://path/to/partitioned_table/part=2'),
+('main','partitioned_table','3','mock://path/to/partitioned_table/part=3'),
+('main','partitioned_table','4','mock://path/to/partitioned_table/part=4');
+
+# 2. Attach mock catalog using structured extra_options
+statement ok
+ATTACH 'mock:///main' AS ms (
+  TYPE metastore,
+  extra_options {
+    namespaces_table: 'mock_ms_namespaces',
+    tables_table: 'mock_ms_tables',
+    partitions_table: 'mock_ms_partitions'
+  }
+);
+
+# Verify metadata is visible via metastore_table_info
+query TTTTT
+SELECT * FROM metastore_table_info('ms', 'main', 'partitioned_table');
+----
+mock_catalog
+main
+partitioned_table
+mock://path/to/partitioned_table
+Parquet
+
+# Set max_partitions to 2, should fail because we have 5 partitions
+statement ok
+SET metastore_max_partitions=2;
+
+# Querying the table should trigger the guardrail BinderException during planning
+statement error
+SELECT * FROM ms.main.partitioned_table;
+----
+Too many partitions (5) for table main.partitioned_table. Add a simple predicate on partition columns or increase metastore_max_partitions.
+
+# Set max_partitions back to 10, it will pass the guardrail
+statement ok
+SET metastore_max_partitions=10;

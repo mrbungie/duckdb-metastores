@@ -1,10 +1,10 @@
 # name: test/sql/metastore/generic/extension_load.test
-# description: verify the metastore extension loads and metastore_scan function exists
+# description: verify the metastore extension loads and metastore_table_info function exists
 # group: [generic]
 
-# Before the extension is loaded, metastore_scan must not exist
+# Before the extension is loaded, metastore_table_info must not exist
 statement error
-SELECT * FROM metastore_scan('catalog', 'schema', 'table');
+SELECT * FROM metastore_table_info('catalog', 'schema', 'table');
 ----
 Catalog Error
 
@@ -12,6 +12,6 @@ Catalog Error
 require metastore
 
 statement error
-SELECT * FROM metastore_scan('my_catalog', 'my_schema', 'my_table');
+SELECT * FROM metastore_table_info('my_catalog', 'my_schema', 'my_table');
 ----
-Catalog is not attached as metastore: my_catalog
+Catalog is not attached as metastore, or not found: my_catalog
