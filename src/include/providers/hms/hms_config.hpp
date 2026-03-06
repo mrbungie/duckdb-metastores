@@ -41,16 +41,20 @@ struct HmsConfig {
 };
 
 //===--------------------------------------------------------------------===//
-// ParseHmsEndpoint — parse an HMS URI into HmsConfig
-//
-// Supported URI forms:
-//   thrift://hostname:9083       -> Thrift transport
-//   thrift+ssl://hostname:9083   -> ThriftTLS transport
-//   hostname:9083                -> bare host:port, defaults to Thrift
-//   hostname                     -> bare host, defaults to Thrift + port 9083
-//
-// Throws MetastoreException with InvalidConfig on malformed URI.
+// Internal Helpers for HMS Endpoint Parsing
 //===--------------------------------------------------------------------===//
+
+//! Internal helper: validate port string; returns false if invalid
+static bool ValidatePort(const std::string &port_str, uint16_t &port_out);
+
+//! Internal helper: strip scheme from HMS URI; returns (transport, remainder)
+static std::pair<HmsTransport, std::string> StripScheme(const std::string &endpoint);
+
+//! Internal helper: split host:port string; returns (host, port) or (input, empty) if no colon
+static std::pair<std::string, std::string> SplitHostPort(const std::string &remainder);
+
+//===--------------------------------------------------------------------===//
+// ParseHmsEndpoint — parse an HMS URI into HmsConfig
 HmsConfig ParseHmsEndpoint(const std::string &endpoint);
 
 } // namespace duckdb

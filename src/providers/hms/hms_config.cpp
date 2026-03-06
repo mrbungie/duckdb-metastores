@@ -3,7 +3,7 @@
 
 namespace duckdb {
 
-static bool ParsePort(const std::string &port_str, uint16_t &port_out) {
+static bool ValidatePort(const std::string &port_str, uint16_t &port_out) {
 	if (port_str.empty()) {
 		return false;
 	}
@@ -25,6 +25,31 @@ static bool ParsePort(const std::string &port_str, uint16_t &port_out) {
 	return true;
 }
 
+static std::pair<HmsTransport, std::string> StripScheme(const std::string &endpoint) {
+	const std::string thrift_ssl_scheme = "thrift+ssl://";
+	const std::string thrift_scheme = "thrift://";
+
+	if (endpoint.size() >= thrift_ssl_scheme.size() &&
+	    endpoint.substr(0, thrift_ssl_scheme.size()) == thrift_ssl_scheme) {
+		return {HmsTransport::ThriftTLS, endpoint.substr(thrift_ssl_scheme.size())};
+	} else if (endpoint.size() >= thrift_scheme.size() &&
+	           endpoint.substr(0, thrift_scheme.size()) == thrift_scheme) {
+		return {HmsTransport::Thrift, endpoint.substr(thrift_scheme.size())};
+	} else {
+		return {HmsTransport::Thrift, endpoint};
+	}
+}
+
+static std::pair<std::string, std::string> SplitHostPort(const std::string &remainder) {
+	auto colon_pos = remainder.rfind(':');
+	if (colon_pos != std::string::npos && colon_pos > 0) {
+		std::string host = remainder.substr(0, colon_pos);
+		std::string port = remainder.substr(colon_pos + 1);
+		return {host, port};
+	}
+	return {remainder, ""};
+}
+
 HmsConfig ParseHmsEndpoint(const std::string &endpoint) {
 	MetastoreErrorTag tag {"hms", "ParseHmsEndpoint", false};
 
@@ -33,46 +58,30 @@ HmsConfig ParseHmsEndpoint(const std::string &endpoint) {
 	}
 
 	HmsConfig config;
-	std::string remainder;
 
-	// Detect and strip scheme
-	const std::string thrift_ssl_scheme = "thrift+ssl://";
-	const std::string thrift_scheme = "thrift://";
 
-	if (endpoint.size() >= thrift_ssl_scheme.size() &&
-	    endpoint.substr(0, thrift_ssl_scheme.size()) == thrift_ssl_scheme) {
-		config.transport = HmsTransport::ThriftTLS;
-		remainder = endpoint.substr(thrift_ssl_scheme.size());
-	} else if (endpoint.size() >= thrift_scheme.size() && endpoint.substr(0, thrift_scheme.size()) == thrift_scheme) {
-		config.transport = HmsTransport::Thrift;
-		remainder = endpoint.substr(thrift_scheme.size());
-	} else {
-		config.transport = HmsTransport::Thrift;
-		remainder = endpoint;
-	}
+	auto [transport, remainder] = StripScheme(endpoint);
+	config.transport = transport;
 
 	if (remainder.empty()) {
 		throw MetastoreException(MetastoreErrorCode::InvalidConfig, tag,
 		                         "HMS endpoint URI has no host: '" + endpoint + "'");
 	}
 
-	// Split host:port
-	auto colon_pos = remainder.rfind(':');
-	if (colon_pos != std::string::npos && colon_pos > 0) {
-		std::string host_part = remainder.substr(0, colon_pos);
-		std::string port_part = remainder.substr(colon_pos + 1);
-
+	auto [host, port_str] = SplitHostPort(remainder);
+	if (port_str.empty()) {
+		// No port specified, use default
+		config.endpoint = host;
+		config.port = 9083;
+	} else {
 		uint16_t parsed_port;
-		if (ParsePort(port_part, parsed_port)) {
-			config.endpoint = host_part;
+		if (ValidatePort(port_str, parsed_port)) {
+			config.endpoint = host;
 			config.port = parsed_port;
 		} else {
 			throw MetastoreException(MetastoreErrorCode::InvalidConfig, tag,
 			                         "Invalid port in HMS endpoint URI: '" + endpoint + "'");
 		}
-	} else {
-		config.endpoint = remainder;
-		config.port = 9083;
 	}
 
 	if (config.endpoint.empty()) {
