@@ -867,23 +867,31 @@ static duckdb::unique_ptr<FunctionData> MetastoreReadBindInternal(ClientContext 
 	}
 	EnsurePartitionColumnsInSchema(*bind_data);
 
-	MetastorePlanOptions opt;
-	opt.catalog_name = catalog;
-	opt.table_name = table_name;
-	opt.predicate = "";
-	opt.max_partitions = GetMaxPartitions(context);
-	opt.allow_expand_paths = true;
-
-	auto plan = PlanScan(context, *bind_data->connector, bind_data->table, opt);
-	bind_data->scan_files = std::move(plan.files);
-	bind_data->selected_partitions = std::move(plan.selected_partitions);
-	bind_data->partitions = std::move(plan.partitions);
-	auto &fs = FileSystem::GetFileSystem(context);
-	for (idx_t i = 0; i < bind_data->scan_files.size(); i++) {
-		auto norm_path = MetastoreUtils::NormalizeLocation(fs.ExpandPath(bind_data->scan_files[i]));
-		bind_data->file_to_part_idx[norm_path] = plan.file_partition_indices[i];
-	}
 	bind_data->needs_planning = bind_data->is_partitioned;
+	if (bind_data->is_partitioned) {
+		if (bind_data->table.storage_descriptor.columns.empty()) {
+			MetastorePlanOptions opt;
+			opt.catalog_name = catalog;
+			opt.table_name = table_name;
+			opt.predicate = "";
+			opt.max_partitions = GetMaxPartitions(context);
+			opt.allow_expand_paths = true;
+
+			auto plan = PlanScan(context, *bind_data->connector, bind_data->table, opt);
+			bind_data->scan_files = std::move(plan.files);
+			bind_data->selected_partitions = std::move(plan.selected_partitions);
+			bind_data->partitions = std::move(plan.partitions);
+			auto &fs = FileSystem::GetFileSystem(context);
+			for (idx_t i = 0; i < bind_data->scan_files.size(); i++) {
+				auto norm_path = MetastoreUtils::NormalizeLocation(fs.ExpandPath(bind_data->scan_files[i]));
+				bind_data->file_to_part_idx[norm_path] = plan.file_partition_indices[i];
+			}
+			BindUnderlyingFunction(context, *bind_data);
+		}
+		return_types = bind_data->return_types;
+		names = bind_data->names;
+		return std::move(bind_data);
+	}
 
 	BindUnderlyingFunction(context, *bind_data);
 	return_types = bind_data->return_types;
@@ -938,7 +946,7 @@ void MetastoreReadPushdownComplexFilter(ClientContext &context, LogicalGet &get,
 	opt.max_partitions = GetMaxPartitions(context);
 	opt.allow_expand_paths = true;
 
-	if (!predicate.empty() && bind_data.last_predicate == predicate && !bind_data.scan_files.empty()) {
+	if (bind_data.last_predicate == predicate && !bind_data.scan_files.empty()) {
 		// Already planned with this predicate
 		return;
 	}
@@ -962,7 +970,7 @@ void MetastoreReadPushdownComplexFilter(ClientContext &context, LogicalGet &get,
 	bind_data.last_predicate = predicate;
 	bind_data.needs_planning = false;
 
-	if (changed) {
+	if (changed || !bind_data.underlying_bind_data) {
 		BindUnderlyingFunction(context, bind_data);
 	}
 
@@ -1193,7 +1201,7 @@ void MetastoreReadExecute(ClientContext &context, TableFunctionInput &data, Data
 	auto &gstate = data.global_state->Cast<MetastoreReadGlobalState>();
 	auto &lstate = data.local_state->Cast<MetastoreReadLocalState>();
 
-	if (bind_data.scan_files.empty()) {
+	if (bind_data.is_partitioned && bind_data.scan_files.empty()) {
 		output.SetCardinality(0);
 		return;
 	}
@@ -1209,7 +1217,20 @@ void MetastoreReadExecute(ClientContext &context, TableFunctionInput &data, Data
 		auto u_idx = gstate.output_to_underlying_idx[i];
 		if (u_idx != METASTORE_INVALID_INDEX) {
 			if (u_idx < lstate.underlying_chunk.ColumnCount()) {
-				output.data[i].Reference(lstate.underlying_chunk.data[u_idx]);
+				auto &src = lstate.underlying_chunk.data[u_idx];
+				auto &dest = output.data[i];
+				if (src.GetType() == dest.GetType()) {
+					dest.Reference(src);
+				} else {
+					for (idx_t r = 0; r < N; r++) {
+						auto val = src.GetValue(r);
+						if (val.IsNull()) {
+							FlatVector::SetNull(dest, r, true);
+						} else {
+							dest.SetValue(r, val.CastAs(context, dest.GetType()));
+						}
+					}
+				}
 			} else {
 				FlatVector::Validity(output.data[i]).SetAllInvalid(N);
 			}
