@@ -17,6 +17,7 @@ struct MetastoreScanPlan {
 };
 
 struct MetastorePlanOptions {
+	string catalog_name;
 	string table_name;
 	string predicate;
 	idx_t max_partitions = 100000;

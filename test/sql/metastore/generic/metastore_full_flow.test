@@ -81,3 +81,27 @@ query II
 SELECT msg, level FROM decoupled.default.logs WHERE level = 'ERROR';
 ----
 Crashed	ERROR
+
+statement ok
+CALL metastore_create_table('decoupled', 'default', 'int_parts',
+    location='int_parts_data/',
+    columns={'id': 'INTEGER'},
+    partitions={'p': 'INT'}
+);
+
+statement ok
+CALL metastore_insert('decoupled', 'default', 'int_parts',
+    query='SELECT 1 AS id, 1 AS p UNION ALL SELECT 2, 2 UNION ALL SELECT 9, 9 UNION ALL SELECT 10, 10 UNION ALL SELECT 11, 11'
+);
+
+query I
+SELECT CAST(p AS INTEGER) FROM decoupled.default.int_parts WHERE CAST(p AS INTEGER) > 9 ORDER BY 1;
+----
+10
+11
+
+query I
+SELECT CAST(p AS INTEGER) FROM metastore_read('decoupled', 'default', 'int_parts') WHERE CAST(p AS INTEGER) > 9 ORDER BY 1;
+----
+10
+11

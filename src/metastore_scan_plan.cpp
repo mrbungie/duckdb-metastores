@@ -1,6 +1,7 @@
 #include "metastore_scan_plan.hpp"
 #include "connector/metastore_connector.hpp"
 #include "formats/format_reader.hpp"
+#include "metastore_partition_cache.hpp"
 #include <algorithm>
 
 namespace duckdb {
@@ -124,8 +125,26 @@ static void ExpandFiles(MetastoreScanPlan &plan, FileSystem &fs, ClientContext &
 // Throws BinderException on connector failure or when partition
 // count exceeds max_partitions.
 // ──────────────────────────────────────────────────────────────
-static void ListPartitions(MetastoreScanPlan &plan, IMetastoreConnector &connector,
-                           const MetastoreTable &table, const MetastorePlanOptions &opt) {
+static void ListPartitions(MetastoreScanPlan &plan, ClientContext &context, IMetastoreConnector &connector,
+                           const MetastoreTable &table, const MetastorePlanOptions &opt, int64_t cache_ttl,
+                           idx_t cache_max_entries) {
+	auto cache = MetastorePartitionCache::GetOrCreate(context);
+	auto cache_key = MakePartitionCacheKey(opt.catalog_name, connector.GetNamespace(), opt.table_name, opt.predicate);
+
+	if (cache_ttl > 0) {
+		if (auto *cached = cache->Lookup(cache_key, cache_ttl)) {
+			plan.partitions_examined = cached->size();
+			if (plan.partitions_examined > opt.max_partitions) {
+				throw BinderException("Too many partitions (%s) for table %s.%s. Add a simple predicate on partition "
+				                      "columns or increase metastore_max_partitions.",
+				                      to_string(plan.partitions_examined), connector.GetNamespace(), opt.table_name);
+			}
+			plan.partitions.assign(cached->begin(), cached->end());
+			plan.selected_partitions = ExtractPartitionNames(table, plan.partitions);
+			return;
+		}
+	}
+
 	auto parts_result = connector.ListPartitions(opt.table_name, opt.predicate);
 	if (!parts_result.IsOk()) {
 		throw BinderException("Failed to list partitions for %s.%s: %s", connector.GetNamespace(), opt.table_name,
@@ -139,6 +158,9 @@ static void ListPartitions(MetastoreScanPlan &plan, IMetastoreConnector &connect
 		                      to_string(plan.partitions_examined), connector.GetNamespace(), opt.table_name);
 	}
 
+	if (cache_ttl > 0) {
+		cache->Insert(cache_key, parts_result.value, cache_max_entries);
+	}
 	plan.partitions = std::move(parts_result.value);
 	plan.selected_partitions = ExtractPartitionNames(table, plan.partitions);
 }
@@ -186,10 +208,25 @@ MetastoreScanPlan PlanScan(ClientContext &context, IMetastoreConnector &connecto
 
 	auto &fs = FileSystem::GetFileSystem(context);
 	auto &reader = GetFormatReader(table.storage_descriptor.format);
+	int64_t cache_ttl = 30;
+	idx_t cache_max_entries = 256;
+	Value ttl_val;
+	if (context.TryGetCurrentSetting("metastore_partition_cache_ttl", ttl_val)) {
+		cache_ttl = ttl_val.GetValue<int64_t>();
+	}
+	Value max_entries_val;
+	if (context.TryGetCurrentSetting("metastore_partition_cache_max_entries", max_entries_val)) {
+		auto configured = max_entries_val.GetValue<int64_t>();
+		if (configured < 0) {
+			cache_max_entries = 0;
+		} else {
+			cache_max_entries = UnsafeNumericCast<idx_t>(configured);
+		}
+	}
 
 	// Stage 1: list and validate partitions (partitioned tables only)
 	if (plan.is_partitioned) {
-		ListPartitions(plan, connector, table, opt);
+		ListPartitions(plan, context, connector, table, opt, cache_ttl, cache_max_entries);
 	}
 
 	// Stage 2: expand partition/table locations into concrete scan files

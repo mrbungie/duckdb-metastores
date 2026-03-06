@@ -317,7 +317,7 @@ static std::vector<std::string> GetPartitionNames(const MetastoreTable &table,
 	return names;
 }
 
-static bool EvaluatePartitionValueFilter(const string &value, const TableFilter &filter) {
+static bool EvaluatePartitionValueFilter(const string &value, const TableFilter &filter, const LogicalType &col_type) {
 	switch (filter.filter_type) {
 	case TableFilterType::CONSTANT_COMPARISON: {
 		auto &cmp = filter.Cast<ConstantFilter>();
@@ -328,30 +328,65 @@ static bool EvaluatePartitionValueFilter(const string &value, const TableFilter 
 		case ExpressionType::COMPARE_NOTEQUAL:
 			return value != rhs;
 		case ExpressionType::COMPARE_GREATERTHAN:
-			return value > rhs;
 		case ExpressionType::COMPARE_GREATERTHANOREQUALTO:
-			return value >= rhs;
 		case ExpressionType::COMPARE_LESSTHAN:
-			return value < rhs;
 		case ExpressionType::COMPARE_LESSTHANOREQUALTO:
-			return value <= rhs;
+			try {
+				Value lhs = Value(value).DefaultCastAs(col_type);
+				const Value &typed_rhs = cmp.constant;
+				switch (cmp.comparison_type) {
+				case ExpressionType::COMPARE_GREATERTHAN:
+					return lhs > typed_rhs;
+				case ExpressionType::COMPARE_GREATERTHANOREQUALTO:
+					return lhs >= typed_rhs;
+				case ExpressionType::COMPARE_LESSTHAN:
+					return lhs < typed_rhs;
+				case ExpressionType::COMPARE_LESSTHANOREQUALTO:
+					return lhs <= typed_rhs;
+				default:
+					return true;
+				}
+			} catch (...) {
+				switch (cmp.comparison_type) {
+				case ExpressionType::COMPARE_GREATERTHAN:
+					return value > rhs;
+				case ExpressionType::COMPARE_GREATERTHANOREQUALTO:
+					return value >= rhs;
+				case ExpressionType::COMPARE_LESSTHAN:
+					return value < rhs;
+				case ExpressionType::COMPARE_LESSTHANOREQUALTO:
+					return value <= rhs;
+				default:
+					return true;
+				}
+			}
 		default:
 			return true;
 		}
 	}
 	case TableFilterType::IN_FILTER: {
 		auto &in_filter = filter.Cast<InFilter>();
-		for (auto &candidate : in_filter.values) {
-			if (value == candidate.ToString()) {
-				return true;
+		try {
+			Value lhs = Value(value).DefaultCastAs(col_type);
+			for (auto &candidate : in_filter.values) {
+				if (lhs == candidate) {
+					return true;
+				}
 			}
+			return false;
+		} catch (...) {
+			for (auto &candidate : in_filter.values) {
+				if (value == candidate.ToString()) {
+					return true;
+				}
+			}
+			return false;
 		}
-		return false;
 	}
 	case TableFilterType::CONJUNCTION_AND: {
 		auto &and_filter = filter.Cast<ConjunctionAndFilter>();
 		for (auto &child : and_filter.child_filters) {
-			if (!EvaluatePartitionValueFilter(value, *child)) {
+			if (!EvaluatePartitionValueFilter(value, *child, col_type)) {
 				return false;
 			}
 		}
@@ -360,7 +395,7 @@ static bool EvaluatePartitionValueFilter(const string &value, const TableFilter 
 	case TableFilterType::CONJUNCTION_OR: {
 		auto &or_filter = filter.Cast<ConjunctionOrFilter>();
 		for (auto &child : or_filter.child_filters) {
-			if (EvaluatePartitionValueFilter(value, *child)) {
+			if (EvaluatePartitionValueFilter(value, *child, col_type)) {
 				return true;
 			}
 		}
@@ -451,6 +486,13 @@ static bool EvaluateTableFilterKeepVector(const MetastoreTable &table, const Tab
 		if (part_idx == METASTORE_INVALID_INDEX) {
 			continue;
 		}
+		LogicalType col_type = LogicalType::VARCHAR;
+		try {
+			auto &part_col = table.partition_spec.columns[part_idx];
+			col_type = TransformStringToLogicalType(MetastoreUtils::MapHiveTypeToDuckDB(part_col.type));
+		} catch (...) {
+			col_type = LogicalType::VARCHAR;
+		}
 		has_partition_filter = true;
 		for (idx_t p = 0; p < partitions.size(); p++) {
 			if (!keep[p]) {
@@ -460,7 +502,7 @@ static bool EvaluateTableFilterKeepVector(const MetastoreTable &table, const Tab
 				keep[p] = false;
 				continue;
 			}
-			if (!EvaluatePartitionValueFilter(partitions[p].values[part_idx], *entry.second)) {
+			if (!EvaluatePartitionValueFilter(partitions[p].values[part_idx], *entry.second, col_type)) {
 				keep[p] = false;
 			}
 		}
@@ -826,6 +868,7 @@ static duckdb::unique_ptr<FunctionData> MetastoreReadBindInternal(ClientContext 
 	EnsurePartitionColumnsInSchema(*bind_data);
 
 	MetastorePlanOptions opt;
+	opt.catalog_name = catalog;
 	opt.table_name = table_name;
 	opt.predicate = "";
 	opt.max_partitions = GetMaxPartitions(context);
@@ -889,6 +932,7 @@ void MetastoreReadPushdownComplexFilter(ClientContext &context, LogicalGet &get,
 	    MetastorePartitionPredicate::FromTableFilters(bind_data.table, filter_set, get.GetColumnIds(), bind_data.names);
 
 	MetastorePlanOptions opt;
+	opt.catalog_name = bind_data.catalog;
 	opt.table_name = bind_data.table_name;
 	opt.predicate = predicate;
 	opt.max_partitions = GetMaxPartitions(context);
@@ -941,6 +985,7 @@ static void EnsureScanPlanned(ClientContext &context, const MetastoreReadBindDat
 	}
 
 	MetastorePlanOptions opt;
+	opt.catalog_name = bind_data.catalog;
 	opt.table_name = bind_data.table_name;
 	opt.predicate = "";
 	opt.max_partitions = GetMaxPartitions(context);

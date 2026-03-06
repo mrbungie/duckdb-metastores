@@ -21,6 +21,7 @@ using Apache::Hadoop::Hive::GetTableRequest;
 using Apache::Hadoop::Hive::GetTableResult;
 using Apache::Hadoop::Hive::MetaException;
 using Apache::Hadoop::Hive::NoSuchObjectException;
+using Apache::Hadoop::Hive::Partition;
 using Apache::Hadoop::Hive::Table;
 using Apache::Hadoop::Hive::ThriftHiveMetastoreClient;
 using apache::thrift::TException;
@@ -241,15 +242,34 @@ MetastoreResult<MetastoreTable> HmsConnector::GetTable(const std::string &table_
 
 MetastoreResult<std::vector<MetastorePartitionValue>> HmsConnector::ListPartitions(const std::string &table_name,
                                                                                    const std::string &predicate) {
-	(void)predicate;
-
 	auto conn_res = ConnectHms(config_);
 	if (!conn_res.IsOk()) {
 		return MetastoreResult<std::vector<MetastorePartitionValue>>::Error(
 		    conn_res.error.code, conn_res.error.message, conn_res.error.detail, conn_res.error.retryable);
 	}
-
 	std::vector<std::string> partition_names;
+
+	if (!predicate.empty()) {
+		try {
+			std::vector<Partition> hms_parts;
+			conn_res.value.client->get_partitions_by_filter(hms_parts, bound_namespace_, table_name, predicate, -1);
+
+			std::vector<MetastorePartitionValue> result;
+			result.reserve(hms_parts.size());
+			for (auto &hms_part : hms_parts) {
+				MetastorePartitionValue partition;
+				partition.values = hms_part.values;
+				partition.location = NormalizeFileLocation(hms_part.sd.location);
+				result.push_back(std::move(partition));
+			}
+			return MetastoreResult<std::vector<MetastorePartitionValue>>::Success(std::move(result));
+		} catch (const TException &) {
+			partition_names.clear();
+		} catch (...) {
+			partition_names.clear();
+		}
+	}
+
 	try {
 		conn_res.value.client->get_partition_names(partition_names, bound_namespace_, table_name, -1);
 	} catch (const NoSuchObjectException &) {

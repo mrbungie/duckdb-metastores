@@ -4,6 +4,7 @@ add_library(
   metastore_runtime.cpp
   metastore_secret_bridge.cpp
   metastore_types.cpp
+  metastore_partition_cache.cpp
   metastore_partition_predicate.cpp
   metastore_replacement_scan.cpp 
   metastore_storage_extension.cpp

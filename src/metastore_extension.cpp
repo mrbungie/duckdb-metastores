@@ -23,6 +23,10 @@ static void LoadInternal(ExtensionLoader &loader) {
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(false));
 	config.AddExtensionOption("metastore_max_partitions", "Maximum number of partitions to list for a table",
 	                          LogicalType::BIGINT, Value::BIGINT(100000));
+	config.AddExtensionOption("metastore_partition_cache_ttl", "Partition list cache TTL in seconds (0 = disabled)",
+	                          LogicalType::BIGINT, Value::BIGINT(30));
+	config.AddExtensionOption("metastore_partition_cache_max_entries", "Partition cache max entries per session (0 = disabled)",
+	                          LogicalType::BIGINT, Value::BIGINT(256));
 
 	// Register functions
 	// Iceberg Table Functions

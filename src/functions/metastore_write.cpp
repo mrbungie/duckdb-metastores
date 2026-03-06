@@ -1,5 +1,6 @@
 #include "metastore_functions.hpp"
 #include "metastore_runtime.hpp"
+#include "metastore_partition_cache.hpp"
 #include "connector/metastore_connector.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/common/exception.hpp"
@@ -61,6 +62,12 @@ struct MetastoreWriteGlobalState : public GlobalTableFunctionState {
 	duckdb::unique_ptr<IMetastoreConnector> connector;
 	bool success = false;
 };
+
+static void InvalidatePartitionCacheForTable(ClientContext &context, const string &catalog, const string &schema,
+	                                         const string &table_name) {
+	auto cache = MetastorePartitionCache::GetOrCreate(context);
+	cache->InvalidateTable(catalog, schema, table_name);
+}
 
 static duckdb::unique_ptr<GlobalTableFunctionState> MetastoreWriteInitGlobal(ClientContext &context,
                                                                              TableFunctionInitInput &input) {
@@ -143,6 +150,7 @@ static void MetastoreCreateTableExecute(ClientContext &context, TableFunctionInp
 
 	output.SetCardinality(1);
 	output.SetValue(0, 0, Value::BOOLEAN(true));
+	InvalidatePartitionCacheForTable(context, bind_data.catalog, bind_data.schema, bind_data.table_name);
 	gstate.success = true;
 }
 
@@ -201,6 +209,7 @@ static void MetastoreCreatePartitionExecute(ClientContext &context, TableFunctio
 
 	output.SetCardinality(1);
 	output.SetValue(0, 0, Value::BOOLEAN(true));
+	InvalidatePartitionCacheForTable(context, bind_data.catalog, bind_data.schema, bind_data.table_name);
 	gstate.success = true;
 }
 
@@ -435,6 +444,7 @@ static void MetastoreInsertExecute(ClientContext &context, TableFunctionInput &d
 
 	output.SetCardinality(1);
 	output.SetValue(0, 0, Value::BOOLEAN(true));
+	InvalidatePartitionCacheForTable(context, bind_data.catalog, bind_data.schema, bind_data.table_name);
 	gstate.success = true;
 }
 
