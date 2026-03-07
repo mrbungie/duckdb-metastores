@@ -1,0 +1,105 @@
+# name: test/sql/metastore/generic/test_metastore_pushdown_fallback.test
+# description: Validate predicate-rejection fallback and non-predicate error propagation
+# group: [generic]
+
+require metastore
+
+require parquet
+
+statement ok
+CREATE TABLE ms_fb_ns(name VARCHAR);
+
+statement ok
+INSERT INTO ms_fb_ns VALUES ('main');
+
+statement ok
+CREATE TABLE ms_fb_tabs(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  location VARCHAR,
+  format VARCHAR,
+  partition_key VARCHAR
+);
+
+statement ok
+CREATE TABLE ms_fb_parts(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  part_value VARCHAR,
+  location VARCHAR
+);
+
+statement ok
+CREATE TABLE ms_fb_cols(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  column_name VARCHAR,
+  column_type VARCHAR,
+  column_index INTEGER
+);
+
+statement ok
+ATTACH 'mock:///main' AS ms_fb (
+  TYPE metastore,
+  extra_options {
+    namespaces_table: 'ms_fb_ns',
+    tables_table: 'ms_fb_tabs',
+    partitions_table: 'ms_fb_parts',
+    columns_table: 'ms_fb_cols'
+  }
+);
+
+statement ok
+COPY (
+  SELECT 1 AS id, 'us' AS region, 2023 AS year, 'a' AS v
+  UNION ALL
+  SELECT 2 AS id, 'us' AS region, 2024 AS year, 'b' AS v
+  UNION ALL
+  SELECT 3 AS id, 'eu' AS region, 2023 AS year, 'c' AS v
+  UNION ALL
+  SELECT 4 AS id, 'eu' AS region, 2024 AS year, 'd' AS v
+) TO 'ms_fb_data' (FORMAT PARQUET, PARTITION_BY (region, year), OVERWRITE 1);
+
+statement ok
+INSERT INTO ms_fb_tabs VALUES ('main', 'tab_fb', 'ms_fb_data/', 'parquet', 'region,year');
+
+statement ok
+INSERT INTO ms_fb_parts VALUES
+('main', 'tab_fb', 'us,2023', 'ms_fb_data/region=us/year=2023/'),
+('main', 'tab_fb', 'us,2024', 'ms_fb_data/region=us/year=2024/'),
+('main', 'tab_fb', 'eu,2023', 'ms_fb_data/region=eu/year=2023/'),
+('main', 'tab_fb', 'eu,2024', 'ms_fb_data/region=eu/year=2024/');
+
+statement ok
+INSERT INTO ms_fb_cols VALUES
+('main', 'tab_fb', 'id', 'integer', 0),
+('main', 'tab_fb', 'v', 'string', 1);
+
+query III
+SELECT region, year, id
+FROM ms_fb.main.tab_fb
+WHERE region = 'us' AND CAST(year AS INTEGER) = 2024
+ORDER BY region, year, id;
+----
+us	2024	2
+
+query II
+EXPLAIN SELECT region, year, id
+FROM metastore_read('ms_fb', 'main', 'tab_fb')
+WHERE region = 'us' AND CAST(year AS INTEGER) = 2024
+ORDER BY region, year, id;
+----
+physical_plan
+<REGEX>:.*Partitions Selected:.*
+
+statement ok
+SET metastore_max_partitions = 1;
+
+statement error
+SELECT COUNT(*)
+FROM metastore_read('ms_fb', 'main', 'tab_fb');
+----
+Too many partitions
+
+statement ok
+RESET metastore_max_partitions;

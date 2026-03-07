@@ -14,13 +14,16 @@ struct PartitionCacheEntry {
 	std::vector<MetastorePartitionValue> partitions;
 	std::chrono::steady_clock::time_point inserted_at;
 	std::list<std::string>::iterator lru_it;
+	bool needs_refresh = false;
 };
 
 class MetastorePartitionCache : public ClientContextState {
 public:
 	static constexpr const char *KEY = "metastore_partition_cache";
 
-	const std::vector<MetastorePartitionValue> *Lookup(const std::string &cache_key, int64_t ttl_seconds);
+	const std::vector<MetastorePartitionValue> *Lookup(const std::string &cache_key, int64_t ttl_seconds,
+	                                                  int64_t negative_ttl_seconds, bool stale_read_enabled,
+	                                                  bool *refresh_stale_entry = nullptr);
 
 	void Insert(const std::string &cache_key, std::vector<MetastorePartitionValue> partitions, idx_t max_entries);
 

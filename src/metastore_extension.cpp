@@ -27,6 +27,15 @@ static void LoadInternal(ExtensionLoader &loader) {
 	                          LogicalType::BIGINT, Value::BIGINT(30));
 	config.AddExtensionOption("metastore_partition_cache_max_entries", "Partition cache max entries per session (0 = disabled)",
 	                          LogicalType::BIGINT, Value::BIGINT(256));
+	config.AddExtensionOption("metastore_stale_read_enabled",
+	                          "Allow serving expired partition cache entries while a refresh is requested",
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	config.AddExtensionOption("metastore_negative_cache_ttl",
+	                          "Partition cache TTL in seconds for empty partition results",
+	                          LogicalType::BIGINT, Value::BIGINT(5));
+	config.AddExtensionOption("metastore_runtime_filter_enabled",
+	                          "Enable runtime partition re-pruning from merged dynamic filters",
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(false));
 
 	// Register functions
 	// Iceberg Table Functions

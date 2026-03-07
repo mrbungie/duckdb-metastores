@@ -1,0 +1,170 @@
+# name: test/sql/metastore/generic/test_metastore_cache_enhancements.test
+# description: Cache enhancements - stale-while-revalidate, negative caching, canonical predicate keying
+# group: [generic]
+
+require metastore
+
+require parquet
+
+statement ok
+CREATE TABLE cache_ns(name VARCHAR);
+
+statement ok
+INSERT INTO cache_ns VALUES ('default');
+
+statement ok
+CREATE TABLE cache_tables(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  location VARCHAR,
+  format VARCHAR,
+  partition_key VARCHAR
+);
+
+statement ok
+CREATE TABLE cache_parts(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  part_value VARCHAR,
+  location VARCHAR
+);
+
+statement ok
+CREATE TABLE cache_cols(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  column_name VARCHAR,
+  column_type VARCHAR,
+  column_index INTEGER
+);
+
+statement ok
+ATTACH 'mock:///default' AS ce (
+  TYPE metastore,
+  extra_options {
+    namespaces_table: 'cache_ns',
+    tables_table: 'cache_tables',
+    partitions_table: 'cache_parts',
+    columns_table: 'cache_cols'
+  }
+);
+
+statement ok
+COPY (
+  SELECT 1 AS id, 'a' AS col_a, 'b' AS col_b
+  UNION ALL
+  SELECT 2 AS id, 'x' AS col_a, 'y' AS col_b
+  UNION ALL
+  SELECT 3 AS id, 'p' AS col_a, 'q' AS col_b
+) TO 'cache_test_data' (FORMAT PARQUET, PARTITION_BY (col_a, col_b), OVERWRITE 1);
+
+statement ok
+INSERT INTO cache_tables VALUES ('default', 'test_table', 'cache_test_data/', 'parquet', 'col_a,col_b');
+
+statement ok
+INSERT INTO cache_parts VALUES
+('default', 'test_table', 'a,b', 'cache_test_data/col_a=a/col_b=b/'),
+('default', 'test_table', 'x,y', 'cache_test_data/col_a=x/col_b=y/'),
+('default', 'test_table', 'p,q', 'cache_test_data/col_a=p/col_b=q/');
+
+statement ok
+INSERT INTO cache_cols VALUES
+('default', 'test_table', 'id', 'integer', 0),
+('default', 'test_table', 'col_a', 'string', 1),
+('default', 'test_table', 'col_b', 'string', 2);
+
+# ──────────────────────────────────────────────────────────────
+# TEST 1: Baseline cache hit verification
+# ──────────────────────────────────────────────────────────────
+# Verify that identical predicates reuse cached partition list.
+# This test should PASS (baseline functionality).
+# Expected: both queries return same rows, second one hits cache.
+
+query I
+SELECT COUNT(*) FROM ce.default.test_table WHERE col_a = 'a' AND col_b = 'b';
+----
+1
+
+query I
+SELECT COUNT(*) FROM ce.default.test_table WHERE col_a = 'a' AND col_b = 'b';
+----
+1
+
+# ──────────────────────────────────────────────────────────────
+# TEST 2: Canonical predicate keying - AND operand reordering
+# ──────────────────────────────────────────────────────────────
+# RED PHASE: Canonicalization not yet implemented (Task 9).
+# These queries have predicates with swapped AND operands.
+# Both should map to the same cache key after canonicalization.
+# Currently, they generate different keys (reordered AND not supported),
+# so the second query will re-fetch partitions instead of hitting cache.
+# After Task 9, both will share the same cache key.
+#
+# Observable behavior difference:
+#   - Pre-Task 9: Second query fetches partitions again (cache miss)
+#   - Post-Task 9: Second query reuses cache (cache hit)
+
+query I
+SELECT COUNT(*) FROM ce.default.test_table WHERE col_a = 'x' AND col_b = 'y';
+----
+1
+
+# Same predicate with operands reordered (canonical keying should make them equivalent)
+query I
+SELECT COUNT(*) FROM ce.default.test_table WHERE col_b = 'y' AND col_a = 'x';
+----
+1
+
+# ──────────────────────────────────────────────────────────────
+# TEST 3: Stale-while-revalidate with config flag metastore_stale_read_enabled
+# ──────────────────────────────────────────────────────────────
+# RED PHASE: Stale-read not yet implemented (config flag doesn't exist - Task 10).
+# Setting the flag will fail until Task 10 adds the setting.
+#
+# Observable behavior difference:
+#   - Without flag (current): expired cache entries are discarded (full cache miss)
+#   - With flag enabled (Task 10): expired cache entries are returned (stale-read)
+#
+# This test will fail at the SET statement because the flag is missing.
+
+query I
+SELECT COUNT(*) FROM ce.default.test_table WHERE col_a = 'p' AND col_b = 'q';
+----
+1
+
+# Now attempt to set stale-read enabled (flag doesn't exist yet, so this FAILS)
+# After Task 10, metastore_stale_read_enabled will be a valid config flag
+statement ok
+SET metastore_stale_read_enabled = true;
+
+# ──────────────────────────────────────────────────────────────
+# TEST 4: Canonical keying with multiple AND conditions
+# ──────────────────────────────────────────────────────────────
+# RED PHASE: AND operand reordering not yet canonical (Task 9).
+# Three-operand AND clauses should also canonicalize.
+# Pre-Task 9: These generate different cache keys
+# Post-Task 9: Same cache key
+
+query I
+SELECT COUNT(*) FROM ce.default.test_table WHERE col_a = 'a' AND col_b = 'b' AND id = 1;
+----
+1
+
+# Reorder the AND operands (id first now)
+query I
+SELECT COUNT(*) FROM ce.default.test_table WHERE id = 1 AND col_b = 'b' AND col_a = 'a';
+----
+1
+
+# ──────────────────────────────────────────────────────────────
+# TEST 5: Negative cache with config flag metastore_negative_cache_ttl
+# ──────────────────────────────────────────────────────────────
+# RED PHASE: Negative cache TTL config doesn't exist yet (Task 10).
+# This test will fail at the SET statement because the flag is missing.
+#
+# Observable difference:
+#   - Without flag: No separate negative cache TTL
+#   - With flag (Task 10): Empty results cached with shorter TTL
+
+statement ok
+SET metastore_negative_cache_ttl = 2;

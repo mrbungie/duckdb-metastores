@@ -90,6 +90,7 @@ static std::string FilterToPredicate(const std::string &col_name, const TableFil
 	case TableFilterType::IS_NOT_NULL:
 		return col_name + " != '__HIVE_DEFAULT_PARTITION__'";
 	case TableFilterType::IS_NULL:
+		return col_name + " = '__HIVE_DEFAULT_PARTITION__'";
 	default:
 		return "";
 	}
@@ -114,11 +115,13 @@ std::string MetastorePartitionPredicate::FromTableFilters(const MetastoreTable &
 		}
 		const std::string &col_name = names[column_id];
 
-		// Check if col_name is a partition column
+		// Check if col_name is a partition column (case-insensitive match)
 		bool is_partition_col = false;
+		const std::string *canonical_col_name = nullptr;
 		for (auto &part_col : table.partition_spec.columns) {
-			if (part_col.name == col_name) {
+			if (StringUtil::CIEquals(part_col.name, col_name)) {
 				is_partition_col = true;
+				canonical_col_name = &part_col.name;
 				break;
 			}
 		}
@@ -127,7 +130,7 @@ std::string MetastorePartitionPredicate::FromTableFilters(const MetastoreTable &
 			continue;
 		}
 
-		std::string col_pred = FilterToPredicate(col_name, filter);
+		std::string col_pred = FilterToPredicate(*canonical_col_name, filter);
 		if (!col_pred.empty()) {
 			if (!first) {
 				predicate += " AND ";

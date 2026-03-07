@@ -247,6 +247,52 @@ public:
 		}
 	}
 
+	MetastoreResult<MetastoreTableProperties> GetTableStats(const std::string &table_name) override {
+		try {
+			if (!store.HasTable(bound_namespace, table_name)) {
+				LoadFromTables();
+			}
+			if (!store.HasTable(bound_namespace, table_name)) {
+				return MetastoreResult<MetastoreTableProperties>::Error(MetastoreErrorCode::NotFound,
+				                                                      "mock provider: table '" + bound_namespace + "." +
+				                                                          table_name + "' not found");
+			}
+
+			auto &table = store.GetTable(bound_namespace, table_name);
+			MetastoreTableProperties props;
+
+			if (table.has_statistics && table.statistics.has_row_count) {
+				props["row_count"] = std::to_string(table.statistics.row_count);
+			}
+			if (table.has_statistics && table.statistics.has_total_size) {
+				props["total_size_bytes"] = std::to_string(table.statistics.total_size_bytes);
+			}
+
+			auto row_count_it = table.properties.find("row_count");
+			if (props.find("row_count") == props.end() && row_count_it != table.properties.end() && !row_count_it->second.empty()) {
+				props["row_count"] = row_count_it->second;
+			}
+			auto total_size_it = table.properties.find("total_size_bytes");
+			if (props.find("total_size_bytes") == props.end() && total_size_it != table.properties.end() &&
+			    !total_size_it->second.empty()) {
+				props["total_size_bytes"] = total_size_it->second;
+			}
+
+			if (!table.partition_spec.columns.empty()) {
+				props["partition_count"] = std::to_string(table.partitions.size());
+			}
+
+			if (props.empty()) {
+				return MetastoreResult<MetastoreTableProperties>::Error(MetastoreErrorCode::Unsupported,
+				                                                      "mock provider: table statistics not available");
+			}
+
+			return MetastoreResult<MetastoreTableProperties>::Success(std::move(props));
+		} catch (const std::exception &ex) {
+			return MetastoreResult<MetastoreTableProperties>::Error(MetastoreErrorCode::Transient, ex.what());
+		}
+	}
+
 	MetastoreResult<bool> CreateTable(const MetastoreTable &table) override {
 		try {
 			MockTable mt;

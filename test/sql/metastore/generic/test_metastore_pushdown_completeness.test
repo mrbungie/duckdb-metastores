@@ -1,0 +1,126 @@
+# name: test/sql/metastore/generic/test_metastore_pushdown_completeness.test
+# description: Partition pushdown completeness for LIKE, BETWEEN, NOT IN, IS NULL, IS NOT NULL
+# group: [generic]
+
+require metastore
+
+require parquet
+
+statement ok
+CREATE TABLE pushdown_ns(name VARCHAR);
+
+statement ok
+INSERT INTO pushdown_ns VALUES ('main');
+
+statement ok
+CREATE TABLE pushdown_tabs(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  location VARCHAR,
+  format VARCHAR,
+  partition_key VARCHAR
+);
+
+statement ok
+CREATE TABLE pushdown_parts(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  part_value VARCHAR,
+  location VARCHAR
+);
+
+statement ok
+CREATE TABLE pushdown_cols(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  column_name VARCHAR,
+  column_type VARCHAR,
+  column_index INTEGER
+);
+
+statement ok
+ATTACH 'mock:///main' AS pushdown (
+  TYPE metastore,
+  extra_options {
+    namespaces_table: 'pushdown_ns',
+    tables_table: 'pushdown_tabs',
+    partitions_table: 'pushdown_parts',
+    columns_table: 'pushdown_cols'
+  }
+);
+
+statement ok
+COPY (
+  SELECT
+    101 AS id, 'us' AS region, 2023 AS year, 'q1' AS value
+  UNION ALL
+  SELECT 102, 'us', 2024, 'q2'
+  UNION ALL
+  SELECT 103, 'eu', 2023, 'q1'
+  UNION ALL
+  SELECT 104, 'eu', 2024, 'q2'
+  UNION ALL
+  SELECT 105, 'ap', 2023, 'q1'
+  UNION ALL
+  SELECT 106, 'ap', 2024, 'q2'
+) TO 'pushdown_test_data' (FORMAT PARQUET, PARTITION_BY (region, year), OVERWRITE 1);
+
+statement ok
+INSERT INTO pushdown_tabs VALUES
+  ('main', 'tab_pushdown', 'pushdown_test_data/', 'parquet', 'region,year');
+
+statement ok
+INSERT INTO pushdown_parts VALUES
+  ('main', 'tab_pushdown', 'us,2023', 'pushdown_test_data/region=us/year=2023/'),
+  ('main', 'tab_pushdown', 'us,2024', 'pushdown_test_data/region=us/year=2024/'),
+  ('main', 'tab_pushdown', 'eu,2023', 'pushdown_test_data/region=eu/year=2023/'),
+  ('main', 'tab_pushdown', 'eu,2024', 'pushdown_test_data/region=eu/year=2024/'),
+  ('main', 'tab_pushdown', 'ap,2023', 'pushdown_test_data/region=ap/year=2023/'),
+  ('main', 'tab_pushdown', 'ap,2024', 'pushdown_test_data/region=ap/year=2024/');
+
+statement ok
+INSERT INTO pushdown_cols VALUES
+  ('main', 'tab_pushdown', 'id', 'integer', 0),
+  ('main', 'tab_pushdown', 'value', 'string', 1);
+
+# Test 1: LIKE 'u%' should select us partitions (2 total)
+query II
+EXPLAIN SELECT id FROM pushdown.main.tab_pushdown WHERE region LIKE 'u%'
+----
+physical_plan	<REGEX>:.*Partitions Selected:.*2.*
+
+# Test 2: BETWEEN 2023 AND 2023 should select only 2023 partitions (3 total: us,eu,ap in 2023)
+query II
+EXPLAIN SELECT id FROM pushdown.main.tab_pushdown WHERE CAST(year AS INTEGER) BETWEEN 2023 AND 2023
+----
+physical_plan	<REGEX>:.*Partitions Selected:.*3.*
+
+# Test 3: NOT IN ('eu', 'ap') should select only us partitions (2 total)
+query II
+EXPLAIN SELECT id FROM pushdown.main.tab_pushdown WHERE region NOT IN ('eu', 'ap')
+----
+physical_plan	<REGEX>:.*Partitions Selected:.*2.*
+
+# Test 4: IS NULL should select no partitions (0 total - region is never NULL)
+query II
+EXPLAIN SELECT id FROM pushdown.main.tab_pushdown WHERE region IS NULL
+----
+physical_plan	<REGEX>:.*Partitions Selected:.*0.*
+
+# Test 5: IS NOT NULL should select all partitions (6 total - all have non-NULL region)
+query II
+EXPLAIN SELECT id FROM pushdown.main.tab_pushdown WHERE region IS NOT NULL
+----
+physical_plan	<REGEX>:.*Partitions Selected:.*6.*
+
+# Test 6: REGION (uppercase) = 'us' should match partition column 'region' (case-insensitive, select 2 partitions)
+query II
+EXPLAIN SELECT id FROM pushdown.main.tab_pushdown WHERE REGION = 'us'
+----
+physical_plan	<REGEX>:.*Partitions Selected:.*2.*
+
+# Test 7: Region (mixed-case) IN ('us', 'eu') should match partition column 'region' (case-insensitive, select 4 partitions)
+query II
+EXPLAIN SELECT id FROM pushdown.main.tab_pushdown WHERE Region IN ('us', 'eu')
+----
+physical_plan	<REGEX>:.*Partitions Selected:.*4.*

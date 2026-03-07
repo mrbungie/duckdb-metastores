@@ -66,6 +66,17 @@ static string NormalizeScanPath(const IFormatReader &reader, const string &raw_p
 	return path;
 }
 
+static bool GetBooleanSetting(ClientContext &context, const char *name, bool default_value = false) {
+	Value setting;
+	if (!context.TryGetCurrentSetting(name, setting)) {
+		return default_value;
+	}
+	if (setting.IsNull()) {
+		return default_value;
+	}
+	return setting.GetValue<bool>();
+}
+
 // ──────────────────────────────────────────────────────────────
 // Stage 2: File expansion and filtering
 // Given a single raw partition/table path, resolves it to concrete
@@ -127,42 +138,86 @@ static void ExpandFiles(MetastoreScanPlan &plan, FileSystem &fs, ClientContext &
 // ──────────────────────────────────────────────────────────────
 static void ListPartitions(MetastoreScanPlan &plan, ClientContext &context, IMetastoreConnector &connector,
                            const MetastoreTable &table, const MetastorePlanOptions &opt, int64_t cache_ttl,
-                           idx_t cache_max_entries) {
+                           int64_t negative_cache_ttl, bool stale_read_enabled, idx_t cache_max_entries) {
 	auto cache = MetastorePartitionCache::GetOrCreate(context);
-	auto cache_key = MakePartitionCacheKey(opt.catalog_name, connector.GetNamespace(), opt.table_name, opt.predicate);
+	auto effective_predicate = opt.predicate;
+	auto cache_key =
+	    MakePartitionCacheKey(opt.catalog_name, connector.GetNamespace(), opt.table_name, effective_predicate);
+
+	auto apply_partition_result = [&](const std::vector<MetastorePartitionValue> &partitions) {
+		plan.partitions_examined = partitions.size();
+		if (plan.partitions_examined > opt.max_partitions) {
+			throw BinderException("Too many partitions (%s) for table %s.%s. Add a simple predicate on partition "
+			                      "columns or increase metastore_max_partitions.",
+			                      to_string(plan.partitions_examined), connector.GetNamespace(), opt.table_name);
+		}
+		plan.partitions.assign(partitions.begin(), partitions.end());
+		plan.selected_partitions = ExtractPartitionNames(table, plan.partitions);
+	};
 
 	if (cache_ttl > 0) {
-		if (auto *cached = cache->Lookup(cache_key, cache_ttl)) {
-			plan.partitions_examined = cached->size();
-			if (plan.partitions_examined > opt.max_partitions) {
-				throw BinderException("Too many partitions (%s) for table %s.%s. Add a simple predicate on partition "
-				                      "columns or increase metastore_max_partitions.",
-				                      to_string(plan.partitions_examined), connector.GetNamespace(), opt.table_name);
+		bool refresh_stale_entry = false;
+		if (auto *cached =
+		        cache->Lookup(cache_key, cache_ttl, negative_cache_ttl, stale_read_enabled, &refresh_stale_entry)) {
+			apply_partition_result(*cached);
+
+			if (refresh_stale_entry) {
+				auto refresh_predicate = effective_predicate;
+				auto refresh_key = cache_key;
+				auto refresh_result = connector.ListPartitions(opt.table_name, refresh_predicate);
+				if (!refresh_result.IsOk() && refresh_result.error.code == MetastoreErrorCode::Unsupported) {
+					refresh_predicate = "";
+					refresh_key =
+					    MakePartitionCacheKey(opt.catalog_name, connector.GetNamespace(), opt.table_name, refresh_predicate);
+					refresh_result = connector.ListPartitions(opt.table_name, refresh_predicate);
+				}
+				if (refresh_result.IsOk()) {
+					cache->Insert(refresh_key, std::move(refresh_result.value), cache_max_entries);
+				} else if (GetBooleanSetting(context, "metastore_debug", false)) {
+					Printer::PrintF("[metastore] stale cache refresh failed for %s.%s: %s", connector.GetNamespace(),
+					                opt.table_name, refresh_result.error.message);
+				}
 			}
-			plan.partitions.assign(cached->begin(), cached->end());
-			plan.selected_partitions = ExtractPartitionNames(table, plan.partitions);
+
 			return;
 		}
 	}
 
-	auto parts_result = connector.ListPartitions(opt.table_name, opt.predicate);
+	auto parts_result = connector.ListPartitions(opt.table_name, effective_predicate);
 	if (!parts_result.IsOk()) {
-		throw BinderException("Failed to list partitions for %s.%s: %s", connector.GetNamespace(), opt.table_name,
-		                      parts_result.error.message);
+		if (parts_result.error.code != MetastoreErrorCode::Unsupported) {
+			throw BinderException("Failed to list partitions for %s.%s: %s", connector.GetNamespace(), opt.table_name,
+			                      parts_result.error.message);
+		}
+
+		effective_predicate = "";
+		cache_key = MakePartitionCacheKey(opt.catalog_name, connector.GetNamespace(), opt.table_name, effective_predicate);
+
+		if (GetBooleanSetting(context, "metastore_debug", false)) {
+			Printer::PrintF("[metastore] predicate pushdown rejected for %s.%s; retrying without predicate",
+			                connector.GetNamespace(), opt.table_name);
+		}
+
+		if (cache_ttl > 0) {
+			if (auto *cached = cache->Lookup(cache_key, cache_ttl, negative_cache_ttl, stale_read_enabled)) {
+				apply_partition_result(*cached);
+				return;
+			}
+		}
+
+		parts_result = connector.ListPartitions(opt.table_name, effective_predicate);
+		if (!parts_result.IsOk()) {
+			throw BinderException("Failed to list partitions for %s.%s: %s", connector.GetNamespace(), opt.table_name,
+			                      parts_result.error.message);
+		}
 	}
 
-	plan.partitions_examined = parts_result.value.size();
-	if (plan.partitions_examined > opt.max_partitions) {
-		throw BinderException("Too many partitions (%s) for table %s.%s. Add a simple predicate on partition "
-		                      "columns or increase metastore_max_partitions.",
-		                      to_string(plan.partitions_examined), connector.GetNamespace(), opt.table_name);
-	}
+	apply_partition_result(parts_result.value);
 
 	if (cache_ttl > 0) {
 		cache->Insert(cache_key, parts_result.value, cache_max_entries);
 	}
 	plan.partitions = std::move(parts_result.value);
-	plan.selected_partitions = ExtractPartitionNames(table, plan.partitions);
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -223,10 +278,17 @@ MetastoreScanPlan PlanScan(ClientContext &context, IMetastoreConnector &connecto
 			cache_max_entries = UnsafeNumericCast<idx_t>(configured);
 		}
 	}
+	int64_t negative_cache_ttl = 5;
+	Value negative_ttl_val;
+	if (context.TryGetCurrentSetting("metastore_negative_cache_ttl", negative_ttl_val)) {
+		negative_cache_ttl = negative_ttl_val.GetValue<int64_t>();
+	}
+	bool stale_read_enabled = GetBooleanSetting(context, "metastore_stale_read_enabled", false);
 
 	// Stage 1: list and validate partitions (partitioned tables only)
 	if (plan.is_partitioned) {
-		ListPartitions(plan, context, connector, table, opt, cache_ttl, cache_max_entries);
+		ListPartitions(plan, context, connector, table, opt, cache_ttl, negative_cache_ttl, stale_read_enabled,
+		               cache_max_entries);
 	}
 
 	// Stage 2: expand partition/table locations into concrete scan files

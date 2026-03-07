@@ -1,0 +1,245 @@
+# name: test/sql/metastore/generic/test_metastore_runtime_filter.test
+# description: Test runtime filter partition pruning with EXPLAIN ANALYZE
+# group: [generic]
+
+require metastore
+
+require parquet
+
+statement ok
+CREATE TABLE rtf_ns(name VARCHAR);
+
+statement ok
+INSERT INTO rtf_ns VALUES ('main');
+
+statement ok
+CREATE TABLE rtf_tabs(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  location VARCHAR,
+  format VARCHAR,
+  partition_key VARCHAR
+);
+
+statement ok
+CREATE TABLE rtf_parts(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  part_value VARCHAR,
+  location VARCHAR
+);
+
+statement ok
+CREATE TABLE rtf_cols(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  column_name VARCHAR,
+  column_type VARCHAR,
+  column_index INTEGER
+);
+
+statement ok
+ATTACH 'mock:///main' AS rtf (
+  TYPE metastore,
+  extra_options {
+    namespaces_table: 'rtf_ns',
+    tables_table: 'rtf_tabs',
+    partitions_table: 'rtf_parts',
+    columns_table: 'rtf_cols'
+  }
+);
+
+# Create fact table partitioned by region (4 partitions: us, eu, ap, sa)
+statement ok
+COPY (
+  SELECT 1 AS id, 'A' AS name, 'us' AS region
+  UNION ALL
+  SELECT 2 AS id, 'B' AS name, 'us' AS region
+  UNION ALL
+  SELECT 3 AS id, 'C' AS name, 'eu' AS region
+  UNION ALL
+  SELECT 4 AS id, 'D' AS name, 'eu' AS region
+  UNION ALL
+  SELECT 5 AS id, 'E' AS name, 'ap' AS region
+  UNION ALL
+  SELECT 6 AS id, 'F' AS name, 'ap' AS region
+  UNION ALL
+  SELECT 7 AS id, 'G' AS name, 'sa' AS region
+  UNION ALL
+  SELECT 8 AS id, 'H' AS name, 'sa' AS region
+) TO 'rtf_fact_data' (FORMAT PARQUET, PARTITION_BY (region), OVERWRITE 1);
+
+# Create dimension table with only us and eu regions (unpartitioned parquet)
+statement ok
+COPY (
+  SELECT 'us' AS region, 'United States'::VARCHAR AS region_name
+  UNION ALL
+  SELECT 'eu' AS region, 'Europe'::VARCHAR AS region_name
+) TO 'rtf_dim_data.parquet' (FORMAT PARQUET, OVERWRITE 1);
+
+# Create second dimension table for multi-join runtime filter coverage
+statement ok
+COPY (
+  SELECT 'us' AS region, 'North America'::VARCHAR AS area
+) TO 'rtf_dim2_data.parquet' (FORMAT PARQUET, OVERWRITE 1);
+
+# Register fact and dimension tables in metastore
+statement ok
+INSERT INTO rtf_tabs VALUES 
+('main', 'fact_table', 'rtf_fact_data/', 'parquet', 'region'),
+('main', 'dim_table', 'rtf_dim_data.parquet', 'parquet', ''),
+('main', 'dim2_table', 'rtf_dim2_data.parquet', 'parquet', '');
+
+# Register all 4 partitions of fact table
+statement ok
+INSERT INTO rtf_parts VALUES
+('main', 'fact_table', 'us', 'rtf_fact_data/region=us/'),
+('main', 'fact_table', 'eu', 'rtf_fact_data/region=eu/'),
+('main', 'fact_table', 'ap', 'rtf_fact_data/region=ap/'),
+('main', 'fact_table', 'sa', 'rtf_fact_data/region=sa/');
+
+# Register column metadata
+statement ok
+INSERT INTO rtf_cols VALUES
+('main', 'fact_table', 'id', 'integer', 0),
+('main', 'fact_table', 'name', 'string', 1),
+('main', 'fact_table', 'region', 'string', 2),
+('main', 'dim_table', 'region', 'string', 0),
+('main', 'dim_table', 'region_name', 'string', 1),
+('main', 'dim2_table', 'region', 'string', 0),
+('main', 'dim2_table', 'area', 'string', 1);
+
+# Test 1: Baseline - join query executes correctly (no runtime filter logic yet)
+query II
+SELECT f.id, d.region_name
+FROM rtf.main.fact_table f
+JOIN rtf.main.dim_table d ON f.region = d.region
+ORDER BY f.id;
+----
+1	United States
+2	United States
+3	Europe
+4	Europe
+
+# Test 2: EXPLAIN ANALYZE with runtime filter DISABLED (default behavior)
+# Should scan all 4 partitions: us, eu, ap, sa
+statement ok
+SET metastore_runtime_filter_enabled = false;
+
+query II
+EXPLAIN ANALYZE SELECT f.id, d.region_name
+FROM rtf.main.fact_table f
+JOIN rtf.main.dim_table d ON f.region = d.region
+WHERE f.region IN ('us', 'eu');
+----
+analyzed_plan
+<REGEX>:.*Partitions Selected:.*4.*
+
+# Test 3: EXPLAIN ANALYZE with runtime filter ENABLED (baseline join shape)
+# This query shape triggers runtime pruning on fact_table (4 -> 2).
+statement ok
+SET metastore_runtime_filter_enabled = true;
+
+query II
+EXPLAIN ANALYZE SELECT f.id, d.region_name
+FROM rtf.main.fact_table f
+JOIN rtf.main.dim_table d ON f.region = d.region
+WHERE f.region IN ('us', 'eu');
+----
+analyzed_plan
+<REGEX>:.*Partitions Selected:.*2.*
+
+# Test 3b: EXPLAIN ANALYZE includes runtime metadata when pruning occurs
+query II
+EXPLAIN ANALYZE SELECT f.id, d.region_name
+FROM rtf.main.fact_table f
+JOIN rtf.main.dim_table d ON f.region = d.region
+WHERE f.region IN ('us', 'eu');
+----
+analyzed_plan
+<REGEX>:.*Runtime Filter Applied:.*true.*
+
+# Test 3c: EXPLAIN ANALYZE reports partition count after runtime filtering
+query II
+EXPLAIN ANALYZE SELECT f.id, d.region_name
+FROM rtf.main.fact_table f
+JOIN rtf.main.dim_table d ON f.region = d.region
+WHERE f.region IN ('us', 'eu');
+----
+analyzed_plan
+<REGEX>:(.|\n)*Table: fact_table(.|\n)*Partitions After Runtime(.|\n)*2(.|\n)*
+
+# Test 3d: plain EXPLAIN remains pre-execution and does not include runtime metadata
+query II
+EXPLAIN SELECT f.id, d.region_name
+FROM rtf.main.fact_table f
+JOIN rtf.main.dim_table d ON f.region = d.region
+WHERE f.region IN ('us', 'eu');
+----
+physical_plan
+<REGEX>:.*Partitions Selected:.*4.*
+
+# Test 4: Negative case - join on non-partition column
+# Runtime filter should NOT be applied since join key is not the partition column
+# Should still scan all 4 partitions even with runtime filter enabled
+statement ok
+SET metastore_runtime_filter_enabled = true;
+
+query II
+EXPLAIN ANALYZE SELECT f.id, d.region_name
+FROM rtf.main.fact_table f
+JOIN rtf.main.dim_table d ON f.name = d.region_name
+WHERE d.region = 'us';
+----
+analyzed_plan
+<REGEX>:.*Partitions Selected:.*4.*
+
+# Test 4b: runtime metadata reports not applied when pruning is not possible
+query II
+EXPLAIN ANALYZE SELECT f.id, d.region_name
+FROM rtf.main.fact_table f
+JOIN rtf.main.dim_table d ON f.name = d.region_name
+WHERE d.region = 'us';
+----
+analyzed_plan
+<REGEX>:.*Runtime Filter Applied:.*false.*
+
+# Test 5: Edge case - LEFT JOIN shape includes runtime metadata for fact scan
+query II
+EXPLAIN ANALYZE SELECT d.region_name, f.id
+FROM rtf.main.dim_table d
+LEFT JOIN rtf.main.fact_table f ON f.region = d.region;
+----
+analyzed_plan
+<REGEX>:(.|\n)*Table: fact_table(.|\n)*Partitions After Runtime(.|\n)*4(.|\n)*
+
+# Test 6: Edge case - multiple joins keep runtime metadata stable for fact scan
+query II
+EXPLAIN ANALYZE SELECT f.id, d.region_name, d2.area
+FROM rtf.main.fact_table f
+JOIN rtf.main.dim_table d ON f.region = d.region
+JOIN rtf.main.dim2_table d2 ON f.region = d2.region;
+----
+analyzed_plan
+<REGEX>:(.|\n)*Table: fact_table(.|\n)*Partitions After Runtime(.|\n)*4(.|\n)*
+
+# Test 7: Verify result correctness with runtime filter enabled
+# Even though runtime filter is enabled, results should be the same as disabled
+statement ok
+SET metastore_runtime_filter_enabled = true;
+
+query II
+SELECT f.id, d.region_name
+FROM rtf.main.fact_table f
+JOIN rtf.main.dim_table d ON f.region = d.region
+WHERE d.region IN ('us', 'eu')
+ORDER BY f.id;
+----
+1	United States
+2	United States
+3	Europe
+4	Europe
+
+# Test 8: Verify default disabled state
+statement ok
+SET metastore_runtime_filter_enabled = false;

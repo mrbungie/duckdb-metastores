@@ -1,0 +1,156 @@
+# name: test/sql/metastore/generic/test_metastore_statistics.test
+# description: Validate statistics and cardinality behavior for metastore tables (RED phase - GetTableStats not yet implemented)
+# group: [generic]
+
+require metastore
+
+require parquet
+
+# Setup: Create mock metastore staging tables
+statement ok
+CREATE TABLE ms_stats_ns(name VARCHAR);
+
+statement ok
+INSERT INTO ms_stats_ns VALUES ('main');
+
+statement ok
+CREATE TABLE ms_stats_tabs(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  location VARCHAR,
+  format VARCHAR,
+  partition_key VARCHAR
+);
+
+statement ok
+CREATE TABLE ms_stats_parts(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  part_value VARCHAR,
+  location VARCHAR
+);
+
+statement ok
+CREATE TABLE ms_stats_cols(
+  schema_name VARCHAR,
+  table_name VARCHAR,
+  column_name VARCHAR,
+  column_type VARCHAR,
+  column_index INTEGER
+);
+
+# Attach mock connector
+statement ok
+ATTACH 'mock:///main' AS ms_stats (
+  TYPE metastore,
+  extra_options {
+    namespaces_table: 'ms_stats_ns',
+    tables_table: 'ms_stats_tabs',
+    partitions_table: 'ms_stats_parts',
+    columns_table: 'ms_stats_cols'
+  }
+);
+
+# === SETUP: Register partitioned table (3 partitions, metadata-only for stats testing) ===
+
+# Register partitioned table with 3 partitions (year=2023,2024,2025, 2 rows per partition = 6 total)
+statement ok
+INSERT INTO ms_stats_tabs VALUES ('main', 'tab_partitioned', 'ms_stats_data/', 'parquet', 'year');
+
+statement ok
+INSERT INTO ms_stats_parts VALUES
+  ('main', 'tab_partitioned', '2023', 'ms_stats_data/year=2023/'),
+  ('main', 'tab_partitioned', '2024', 'ms_stats_data/year=2024/'),
+  ('main', 'tab_partitioned', '2025', 'ms_stats_data/year=2025/');
+
+statement ok
+INSERT INTO ms_stats_cols VALUES
+  ('main', 'tab_partitioned', 'id', 'integer', 0),
+  ('main', 'tab_partitioned', 'name', 'varchar', 1),
+  ('main', 'tab_partitioned', 'value', 'integer', 2),
+  ('main', 'tab_partitioned', 'year', 'integer', 3);
+
+# === GREEN TESTS: Baseline functionality ===
+
+# Test 1: Verify partition metadata is registered (metastore can read catalog)
+query I
+SELECT COUNT(*) FROM ms_stats.main.tab_partitioned;
+----
+6
+
+# Test 2: Verify partition selection filter works
+query I
+SELECT COUNT(DISTINCT CAST(year AS VARCHAR)) FROM ms_stats.main.tab_partitioned WHERE CAST(year AS INTEGER) >= 2024;
+----
+2
+
+# Test 3: Verify metastore_read function can access table
+query I
+SELECT COUNT(*) FROM metastore_read('ms_stats', 'main', 'tab_partitioned');
+----
+6
+
+# === RED TESTS: Cardinality/Statistics assertions (FAIL until GetTableStats implemented) ===
+
+# Test 4 (RED): EXPLAIN full scan should estimate 6 rows (3 partitions × 2 rows each)
+# EXPECTED FAILURE: Currently shows ~1 row; Task 6 GetTableStats() should return partition count info
+# Once implemented: Optimizer should estimate 6 rows based on partition metadata
+query II
+EXPLAIN SELECT * FROM ms_stats.main.tab_partitioned;
+----
+physical_plan
+<REGEX>:.*~6 rows.*
+
+# Test 5 (RED): EXPLAIN partition-filtered scan should estimate 2 rows (1 partition × 2 rows)
+# EXPECTED FAILURE: Currently shows ~1 row; Task 6 should enable partition-aware cardinality
+# Once implemented: Filter on year=2023 should reduce estimate to 2 rows
+query II
+EXPLAIN SELECT * FROM ms_stats.main.tab_partitioned WHERE CAST(year AS INTEGER) = 2023;
+----
+physical_plan
+<REGEX>:.*~2 rows.*
+
+# Test 6 (RED): EXPLAIN COUNT aggregate should show cardinality for optimization
+# EXPECTED FAILURE: Missing statistics_return callback from Task 7
+# Once implemented: COUNT query optimization requires cardinality from metastore_read
+query II
+EXPLAIN SELECT COUNT(*) FROM ms_stats.main.tab_partitioned;
+----
+physical_plan
+<REGEX>:.*METASTORE_PARQUET_SCAN.*
+
+# Test 7 (RED): EXPLAIN metastore_read function should propagate cardinality hints
+# EXPECTED FAILURE: No statistics_return callback for table function; Task 7 will wire it
+# Once implemented: metastore_read should report ~6 rows from GetTableStats
+query II
+EXPLAIN SELECT * FROM metastore_read('ms_stats', 'main', 'tab_partitioned');
+----
+physical_plan
+<REGEX>:.*~6 rows.*
+
+# Test 8 (RED): JOIN should use cardinality for join order optimization
+# EXPECTED FAILURE: GetTableStats not wired; optimizer cannot estimate input sizes
+# Once implemented: Join ordering should consider 6-row partition count from both sides
+query II
+EXPLAIN SELECT t1.id FROM ms_stats.main.tab_partitioned t1 JOIN ms_stats.main.tab_partitioned t2 ON t1.year = t2.year;
+----
+physical_plan
+<REGEX>:.*METASTORE_PARQUET_SCAN.*METASTORE_PARQUET_SCAN.*
+
+# Test 9 (RED): GROUP BY should use cardinality for aggregation planning
+# EXPECTED FAILURE: Missing statistics; cannot estimate group cardinality
+# Once implemented: Aggregation planning should use row count estimates
+query II
+EXPLAIN SELECT CAST(year AS INTEGER) AS y, COUNT(*) FROM ms_stats.main.tab_partitioned GROUP BY year;
+----
+physical_plan
+<REGEX>:.*GROUP_BY.*
+
+# Test 10 (RED): Nested subquery should propagate cardinality through query tree
+# EXPECTED FAILURE: Subquery cardinality not estimated from metastore stats
+# Once implemented: Outer query should know subquery produces ~6 rows
+query II
+EXPLAIN SELECT COUNT(*) FROM (SELECT * FROM ms_stats.main.tab_partitioned);
+----
+physical_plan
+<REGEX>:.*METASTORE_PARQUET_SCAN.*
